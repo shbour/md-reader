@@ -26,13 +26,23 @@ in Rust with GTK 4, libadwaita and WebKitGTK.
 
 ## Building
 
+Requires GTK ≥ 4.14, libadwaita ≥ 1.5, WebKitGTK 6.0 ≥ 2.40 and
+GtkSourceView 5, so it builds on Fedora 40+, Ubuntu 24.04+ and Debian 13+
+(Ubuntu 22.04 and Debian 12 ship libraries that are too old).
+
 Fedora:
 
 ```sh
-sudo dnf install gtk4-devel libadwaita-devel webkitgtk6.0-devel gtksourceview5-devel
+sudo dnf install gcc pkgconf-pkg-config gtk4-devel libadwaita-devel webkitgtk6.0-devel gtksourceview5-devel
 ```
 
-Then, with a Rust toolchain (1.85+):
+Debian 13 / Ubuntu 24.04 (and derivatives such as Linux Mint 22, Pop!_OS 24.04):
+
+```sh
+sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libgtksourceview-5-dev
+```
+
+Then, with a Rust toolchain (1.85+, e.g. from [rustup](https://rustup.rs)):
 
 ```sh
 cargo build --release
