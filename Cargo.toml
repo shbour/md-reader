@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "gtk"]
+members = ["core", "gtk", "tauri"]
 # `cargo build` at the root builds the Linux app only; the Tauri app has its
 # own system requirements (see tauri/README.md).
 default-members = ["core", "gtk"]

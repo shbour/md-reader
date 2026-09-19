@@ -217,6 +217,24 @@ pub fn page(body_html: &str) -> String {
     )
 }
 
+/// The page for a sandboxed `<iframe>` preview (the Tauri front end): the
+/// same shell as `page`, with the runtime inlined and `base_href` (the
+/// document's folder) for relative images and links.
+pub fn embedded_page(base_href: Option<&str>) -> String {
+    let base = base_href
+        .map(|b| format!("<base href=\"{}\">", escape_html(b)))
+        .unwrap_or_default();
+    format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">{base}\
+         <meta name=\"color-scheme\" content=\"light dark\">\
+         <style>{PAGE_CSS}</style><style>{hl}</style></head>\
+         <body><article id=\"content\" class=\"markdown-body\"></article>\
+         <script>{rt}</script></body></html>",
+        hl = highlight_css(),
+        rt = crate::assets::RUNTIME_JS,
+    )
+}
+
 /// JavaScript that swaps the article's contents for `body_html`.
 pub fn update_script(body_html: &str) -> String {
     let lit = serde_json::to_string(body_html).expect("string serializes");
@@ -346,6 +364,15 @@ mod tests {
         assert!(!r.html.contains("title: x"), "{}", r.html);
         assert_eq!(r.toc.len(), 1);
         assert_eq!(r.toc[0].line, 4, "line numbers count the front matter");
+    }
+
+    #[test]
+    fn embedded_page_has_base_and_runtime() {
+        let p = embedded_page(Some("http://asset.localhost/C:/Users/a \"b\"/docs/"));
+        assert!(p.contains("<base href=\"http://asset.localhost/C:/Users/a &quot;b&quot;/docs/\">"), "{p}");
+        assert!(p.contains("window.mdr = "));
+        assert!(!crate::assets::RUNTIME_JS.contains("</script"), "runtime must be inlinable");
+        assert!(!embedded_page(None).contains("<base href"));
     }
 
     #[test]

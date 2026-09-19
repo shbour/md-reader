@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Markdown Reader</title>
+<link rel="stylesheet" href="app.css">
+<script src="vendor/codemirror.min.js"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="toolbar">
+  <button id="btn-toc" class="icon" title="Contents (F9)" aria-label="Contents" aria-pressed="false">
+    <svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h9"/></svg>
+  </button>
+  <button id="btn-back" class="icon" title="Back (Alt+Left)" aria-label="Back" hidden>
+    <svg viewBox="0 0 20 20"><path d="M12 4l-6 6 6 6"/></svg>
+  </button>
+  <button id="btn-open" class="text" title="Open a file (Ctrl+O)">Open</button>
+  <div class="title">
+    <div id="doc-title">Markdown Reader</div>
+    <div id="doc-dir"></div>
+  </div>
+  <button id="btn-save" class="text primary" title="Save (Ctrl+S)" hidden>Save</button>
+  <button id="btn-edit" class="icon" title="Edit (Ctrl+E)" aria-label="Edit" aria-pressed="false">
+    <svg viewBox="0 0 20 20"><path d="M4 16l1-4 8-8 3 3-8 8-4 1zM11 6l3 3"/></svg>
+  </button>
+  <div class="menu-wrap">
+    <button id="btn-menu" class="icon" title="Menu" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
+      <svg viewBox="0 0 20 20"><path d="M4 10h.01M10 10h.01M16 10h.01" class="dots"/></svg>
+    </button>
+    <div id="menu" class="menu" role="menu" hidden>
+      <button role="menuitem" data-action="new">New document<kbd>Ctrl+N</kbd></button>
+      <button role="menuitem" data-action="open">Open…<kbd>Ctrl+O</kbd></button>
+      <button role="menuitem" data-action="save-as">Save as…<kbd>Ctrl+Shift+S</kbd></button>
+      <hr>
+      <button role="menuitem" data-action="print">Print or save as PDF…<kbd>Ctrl+P</kbd></button>
+      <button role="menuitem" data-action="export-html">Export as HTML…</button>
+      <hr>
+      <button role="menuitem" data-action="find">Find…<kbd>Ctrl+F</kbd></button>
+      <button role="menuitem" data-action="zoom-in">Zoom in<kbd>Ctrl+=</kbd></button>
+      <button role="menuitem" data-action="zoom-out">Zoom out<kbd>Ctrl+−</kbd></button>
+      <button role="menuitem" data-action="zoom-reset">Reset zoom<kbd>Ctrl+0</kbd></button>
+      <hr>
+      <button role="menuitem" data-action="about">About Markdown Reader</button>
+    </div>
+  </div>
+</header>
+
+<div id="searchbar" class="searchbar" hidden>
+  <input id="search" type="search" placeholder="Find in document" spellcheck="false" autocomplete="off">
+  <span id="match-count" aria-live="polite"></span>
+  <button id="find-prev" class="icon" title="Previous match (Shift+Enter)" aria-label="Previous match">
+    <svg viewBox="0 0 20 20"><path d="M5 12l5-5 5 5"/></svg>
+  </button>
+  <button id="find-next" class="icon" title="Next match (Enter)" aria-label="Next match">
+    <svg viewBox="0 0 20 20"><path d="M5 8l5 5 5-5"/></svg>
+  </button>
+  <button id="find-close" class="icon" title="Close (Esc)" aria-label="Close search">
+    <svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg>
+  </button>
+</div>
+
+<div id="banner" class="banner" hidden>
+  <span>The file changed on disk.</span>
+  <button id="banner-reload" class="text">Reload</button>
+</div>
+
+<main>
+  <nav id="toc" aria-label="Contents" hidden>
+    <div class="toc-title">Contents</div>
+    <ul id="toc-list"></ul>
+  </nav>
+  <div id="work">
+    <section id="editor-pane" hidden><div id="editor"></div></section>
+    <div id="splitter" role="separator" aria-orientation="vertical" hidden></div>
+    <!-- No allow-same-origin: the preview cannot reach the app or its file access. -->
+    <iframe id="preview" sandbox="allow-scripts allow-modals" title="Preview"></iframe>
+  </div>
+</main>
+
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

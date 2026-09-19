@@ -1,11 +1,19 @@
-// Installed into each preview page by the app (page markup cannot run
-// scripts). The app calls these functions; the page reports scrolling back
-// through the "mdr" script message handler.
+// The preview page's runtime, shared by both front ends.
+//
+// GTK: injected into the WebView by the app (page markup cannot run
+// scripts); the app calls these functions directly and the page reports back
+// through the "mdr" WebKit script message handler.
+//
+// Tauri: runs inside a sandboxed <iframe> with no access to the app. The
+// parent page sends commands with postMessage and gets replies, scroll
+// positions, link clicks and forwarded shortcuts back the same way.
 window.mdr = (() => {
   const content = () => document.getElementById("content");
+  const embedded = window.parent !== window;
   const post = (msg) => {
     try {
-      window.webkit.messageHandlers.mdr.postMessage(JSON.stringify(msg));
+      if (embedded) window.parent.postMessage(msg, "*");
+      else window.webkit.messageHandlers.mdr.postMessage(JSON.stringify(msg));
     } catch (_) {}
   };
 
@@ -173,10 +181,15 @@ window.mdr = (() => {
   // ----------------------------------------------------------- search
 
   let findText = "";
+  let findRanges = [];
+  let findIndex = -1;
   function highlight(text) {
     findText = text || "";
+    findRanges = [];
+    findIndex = -1;
     if (!window.CSS || !CSS.highlights) return 0;
     CSS.highlights.delete("mdr-find");
+    CSS.highlights.delete("mdr-find-current");
     if (!findText) return 0;
     const needle = findText.toLowerCase();
     const ranges = [];
@@ -192,7 +205,21 @@ window.mdr = (() => {
       }
     }
     CSS.highlights.set("mdr-find", new Highlight(...ranges));
+    findRanges = ranges;
     return ranges.length;
+  }
+
+  // Move to the next/previous match of the last highlight(); returns
+  // {index, total} (1-based index, 0 when there are no matches).
+  function findStep(forward) {
+    const n = findRanges.length;
+    if (!n) return { index: 0, total: 0 };
+    findIndex = forward ? (findIndex + 1) % n : (findIndex - 1 + n) % n;
+    const r = findRanges[findIndex];
+    CSS.highlights.set("mdr-find-current", new Highlight(r));
+    const rect = r.getBoundingClientRect();
+    window.scrollTo({ top: window.scrollY + rect.top - window.innerHeight * 0.3, behavior: "smooth" });
+    return { index: findIndex + 1, total: n };
   }
 
   // ------------------------------------------------------------ public
@@ -230,5 +257,84 @@ window.mdr = (() => {
 
   // _lineY is only for the app's test hooks.
   const _lineY = (line) => interpolate(points(), line, 0, 1);
-  return { after, scrollToLine, highlight, setForceLight, exportBody, _lineY };
+  // Where `line` sits in the viewport, 0 (top) to 1 (bottom).
+  const _lineFrac = (line) => (_lineY(line) - window.scrollY) / window.innerHeight;
+  const api = { after, scrollToLine, highlight, findStep, setForceLight, exportBody, _lineY, _lineFrac };
+
+  if (embedded) {
+    // Load a library script / stylesheet from the app, once.
+    const loaded = new Map();
+    const load = (url, css) => {
+      if (!loaded.has(url)) {
+        loaded.set(url, new Promise((resolve, reject) => {
+          const el = document.createElement(css ? "link" : "script");
+          if (css) { el.rel = "stylesheet"; el.href = url; } else { el.src = url; }
+          el.onload = resolve;
+          el.onerror = () => reject(new Error("could not load " + url));
+          document.head.appendChild(el);
+        }));
+      }
+      return loaded.get(url);
+    };
+    Object.assign(api, {
+      update(html) {
+        content().innerHTML = html;
+        return after();
+      },
+      async loadLibs(libs) {
+        await Promise.all(libs.map((l) => load(l.url, l.css)));
+      },
+      print() {
+        window.print();
+      },
+      setZoom(z) {
+        document.documentElement.style.zoom = String(z);
+      },
+      scrollToAnchor(id) {
+        const el = document.getElementById(id);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      },
+    });
+
+    window.addEventListener("message", async (e) => {
+      if (e.source !== window.parent || !e.data || typeof e.data.cmd !== "string") return;
+      const { id, cmd, args } = e.data;
+      let reply;
+      try {
+        if (!Object.hasOwn(api, cmd)) throw new Error("unknown command " + cmd);
+        reply = { type: "reply", id, result: await api[cmd](...(args || [])) };
+      } catch (err) {
+        reply = { type: "reply", id, error: String((err && err.message) || err) };
+      }
+      if (id !== undefined) post(reply);
+    });
+
+    // Links: the app decides (other documents open in the app, web links in
+    // the browser). In-page anchors scroll here; the <base> points at the
+    // document's folder, so letting them navigate would leave the page.
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest && e.target.closest("a[href]");
+      if (!a) return;
+      e.preventDefault();
+      const href = a.getAttribute("href");
+      if (href.startsWith("#")) {
+        if (href.length > 1) api.scrollToAnchor(decodeURIComponent(href.slice(1)));
+      } else {
+        post({ type: "link", href });
+      }
+    });
+
+    // Shortcuts pressed while the preview has focus belong to the app.
+    document.addEventListener("keydown", (e) => {
+      const mod = e.ctrlKey || e.metaKey || e.altKey;
+      if (!mod && !/^F\d+$/.test(e.key) && e.key !== "Escape") return;
+      if (mod && ["c", "a"].includes(e.key.toLowerCase()) && !e.shiftKey && !e.altKey) return; // copy / select all
+      e.preventDefault();
+      post({ type: "key", key: e.key, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, alt: e.altKey });
+    });
+
+    post({ type: "ready" });
+  }
+
+  return api;
 })();

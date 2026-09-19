@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Markdown Reader",
+  "identifier": "io.github.mdreader.MdReader",
+  "build": {
+    "frontendDist": "dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Markdown Reader",
+        "width": 1100,
+        "height": 780,
+        "minWidth": 520,
+        "minHeight": 360,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' tauri: http://tauri.localhost",
+        "script-src": "'self' 'unsafe-inline' tauri: http://tauri.localhost",
+        "style-src": "'self' 'unsafe-inline' tauri: http://tauri.localhost",
+        "img-src": "'self' asset: http://asset.localhost data: blob: https: http:",
+        "media-src": "asset: http://asset.localhost https:",
+        "font-src": "'self' data: tauri: http://tauri.localhost",
+        "connect-src": "ipc: http://ipc.localhost",
+        "base-uri": "asset: http://asset.localhost",
+        "object-src": "'none'"
+      },
+      "dangerousDisableAssetCspModification": ["script-src", "style-src"],
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "shbour",
+    "copyright": "© 2026 shbour",
+    "license": "MIT",
+    "category": "Productivity",
+    "shortDescription": "Read, edit and preview Markdown",
+    "longDescription": "A Markdown reader and editor with live preview, math, Mermaid diagrams, and print, PDF and HTML export.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mkd", "mkdn"],
+        "name": "Markdown document",
+        "description": "Markdown document",
+        "role": "Editor",
+        "mimeType": "text/markdown"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}

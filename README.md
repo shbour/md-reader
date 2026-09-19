@@ -78,14 +78,16 @@ Run it with `mdreader [FILE…]` or `mdreader --new`.
 |---|---|
 | `core/` | Markdown rendering, sanitising, link handling, HTML export, and the preview page's CSS and script, shared by both front ends |
 | `gtk/` | The Linux app (GTK 4, libadwaita, WebKitGTK) |
+| `tauri/` | The Windows app (Tauri, WebView2, CodeMirror), see [tauri/README.md](tauri/README.md) |
 | `vendor/` | Bundled KaTeX and Mermaid |
 | `data/` | Icon and desktop entry |
 
 ## Bundled libraries
 
-`vendor/` holds [KaTeX](https://katex.org) and [Mermaid](https://mermaid.js.org),
-both MIT-licensed (licences included). `vendor/update.sh` re-downloads them and
-rebuilds KaTeX's self-contained stylesheet.
+`vendor/` holds [KaTeX](https://katex.org), [Mermaid](https://mermaid.js.org) and,
+for the Windows app, [CodeMirror](https://codemirror.net), all MIT-licensed (licences
+included). `vendor/update.sh` re-downloads KaTeX and Mermaid and rebuilds KaTeX's
+self-contained stylesheet; `vendor/update-codemirror.sh` rebuilds the CodeMirror bundle.
 
 ## Licence
 

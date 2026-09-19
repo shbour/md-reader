@@ -126,6 +126,7 @@ pre.mermaid { color: var(--muted); }
 .mermaid-diagram svg { max-width: 100%; height: auto; }
 
 ::highlight(mdr-find) { background: #f6d32d; color: #1f2328; }
+::highlight(mdr-find-current) { background: #ff7800; color: #ffffff; }
 
 table { border-collapse: collapse; display: block; width: max-content; max-width: 100%; overflow: auto; }
 th, td { padding: 6px 13px; border: 1px solid var(--border); }
