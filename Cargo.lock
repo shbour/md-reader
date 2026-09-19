@@ -831,17 +831,28 @@ dependencies = [
 
 [[package]]
 name = "md-reader"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "ammonia",
- "comrak",
  "futures-channel",
  "gtk4",
  "libadwaita",
+ "mdreader-core",
  "serde_json",
  "sourceview5",
- "syntect",
  "webkit6",
+]
+
+[[package]]
+name = "mdreader-core"
+version = "0.2.0"
+dependencies = [
+ "ammonia",
+ "base64",
+ "comrak",
+ "percent-encoding",
+ "serde_json",
+ "syntect",
+ "url",
 ]
 
 [[package]]

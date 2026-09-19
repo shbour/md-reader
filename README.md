@@ -72,6 +72,15 @@ Run it with `mdreader [FILE…]` or `mdreader --new`.
 | Ctrl+Plus / Ctrl+Minus / Ctrl+0 | Zoom |
 | Ctrl+W / Ctrl+Q | Close window / quit |
 
+## Project layout
+
+| Path | What |
+|---|---|
+| `core/` | Markdown rendering, sanitising, link handling, HTML export, and the preview page's CSS and script, shared by both front ends |
+| `gtk/` | The Linux app (GTK 4, libadwaita, WebKitGTK) |
+| `vendor/` | Bundled KaTeX and Mermaid |
+| `data/` | Icon and desktop entry |
+
 ## Bundled libraries
 
 `vendor/` holds [KaTeX](https://katex.org) and [Mermaid](https://mermaid.js.org),

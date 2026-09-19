@@ -10,9 +10,11 @@ use gtk::{gdk, gio, glib};
 use sourceview5::prelude::*;
 use webkit6::prelude::*;
 
-use crate::links::{self, LinkAction};
-use crate::render::{self, Heading};
-use crate::{assets, export, state};
+use mdreader_core::links::{self, LinkAction};
+use mdreader_core::render::{self, Heading};
+use mdreader_core::{assets, export};
+
+use crate::state;
 
 const APP_NAME: &str = "Markdown Reader";
 const RENDER_DELAY: Duration = Duration::from_millis(120);

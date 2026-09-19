@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use gtk::glib;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use percent_encoding::percent_decode_str;
+use url::Url;
 
 use crate::render;
 
@@ -54,13 +57,13 @@ fn rewrite_img_tag(tag: &str, doc_dir: &Path) -> String {
 }
 
 fn data_uri_for(src: &str, doc_dir: &Path) -> Option<String> {
-    let path = if let Some(rest) = src.strip_prefix("file://") {
-        glib::Uri::unescape_string(rest, None::<&str>)?.to_string().into()
+    let path = if src.starts_with("file:") {
+        Url::parse(src).ok()?.to_file_path().ok()?
     } else if src.contains(':') || src.starts_with("//") || src.is_empty() {
         return None; // http(s), data:, etc. stay as they are
     } else {
         let no_query = src.split(['?', '#']).next().unwrap_or(src);
-        let rel = glib::Uri::unescape_string(no_query, None::<&str>)?.to_string();
+        let rel = percent_decode_str(no_query).decode_utf8().ok()?.into_owned();
         doc_dir.join(rel)
     };
     let meta = std::fs::metadata(&path).ok()?;
@@ -69,7 +72,7 @@ fn data_uri_for(src: &str, doc_dir: &Path) -> Option<String> {
     }
     let mime = mime_for(&path)?;
     let bytes = std::fs::read(&path).ok()?;
-    Some(format!("data:{mime};base64,{}", glib::base64_encode(&bytes)))
+    Some(format!("data:{mime};base64,{}", BASE64.encode(&bytes)))
 }
 
 fn mime_for(path: &Path) -> Option<&'static str> {
@@ -106,7 +109,7 @@ mod tests {
         std::fs::write(dir.join("img dir/a b.png"), b"\x89PNG fake").unwrap();
         let html = r#"<p><img src="img%20dir/a%20b.png" alt="x"> <img alt="r" src="https://example.com/r.png"> <img src="missing.png"></p>"#;
         let out = inline_images(html, &dir);
-        let expected = format!("<img src=\"data:image/png;base64,{}\" alt=\"x\">", glib::base64_encode(b"\x89PNG fake"));
+        let expected = format!("<img src=\"data:image/png;base64,{}\" alt=\"x\">", BASE64.encode(b"\x89PNG fake"));
         assert!(out.contains(&expected), "{out}");
         assert!(out.contains(r#"src="https://example.com/r.png""#), "{out}");
         assert!(out.contains(r#"<img src="missing.png">"#), "{out}");

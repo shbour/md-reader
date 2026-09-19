@@ -1,0 +1,15 @@
+[package]
+name = "mdreader-core"
+description = "Markdown rendering, sanitising and preview page shared by Markdown Reader's front ends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ammonia = "4.2.0"
+base64 = "0.23.1"
+comrak = { version = "0.55.0", default-features = false, features = ["syntect-fancy", "shortcodes"] }
+percent-encoding = "2.3.2"
+serde_json = "1.0.151"
+syntect = { version = "5.3", default-features = false, features = ["default-themes", "default-syntaxes", "html", "regex-fancy"] }
+url = "2.5.8"
