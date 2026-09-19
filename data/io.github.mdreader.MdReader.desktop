@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Markdown Reader
+GenericName=Markdown Viewer
+Comment=Read, edit and preview Markdown files
+Exec=mdreader %U
+Icon=io.github.mdreader.MdReader
+Terminal=false
+Categories=Utility;TextTools;GTK;
+Keywords=markdown;md;readme;preview;notes;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true
+DBusActivatable=false
+Actions=new-document;
+
+[Desktop Action new-document]
+Name=New Document
+Exec=mdreader --new

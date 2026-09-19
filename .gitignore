@@ -1,0 +1,8 @@
+/target
+
+# Local tooling and assistant files: never part of the project.
+.claude/
+CLAUDE.md
+AGENTS.md
+.hermes.md
+*.local

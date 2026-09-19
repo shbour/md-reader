@@ -1,0 +1,23 @@
+[package]
+name = "md-reader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adw = { version = "0.9.2", package = "libadwaita", features = ["v1_5"] }
+ammonia = "4.2.0"
+comrak = { version = "0.55.0", default-features = false, features = ["syntect-fancy", "shortcodes"] }
+futures-channel = "0.3.34"
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_14"] }
+serde_json = "1.0.151"
+sourceview5 = "0.11.2"
+syntect = { version = "5.3", default-features = false, features = ["default-themes", "default-syntaxes", "html", "regex-fancy"] }
+webkit6 = "0.6.1"
+
+[[bin]]
+name = "mdreader"
+path = "src/main.rs"
+
+[profile.release]
+lto = "thin"
+strip = true
