@@ -194,6 +194,30 @@ fn export_html(dest: String, title: String, body: String, has_math: bool, doc_di
 /// Watch `path` (or stop watching, for `None`). Emits "file-changed" with the
 /// path. The folder is watched, not the file, so editors that save by
 /// writing a new file and renaming it over the old one are noticed too.
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
+
+/// An image for the preview, by its asset URL. WebKitGTK only shows custom
+/// scheme URLs to pages that may fetch them, and the sandboxed preview (origin
+/// null) may fetch nothing, so on Linux it asks for the bytes instead. Serves
+/// what the asset protocol would: images inside its scope.
+#[tauri::command]
+fn read_image(app: AppHandle, url: String) -> Result<tauri::ipc::Response, String> {
+    let rest = url.strip_prefix("asset://localhost/").ok_or("not an asset URL")?;
+    let path = PathBuf::from(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned());
+    if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("not allowed".into());
+    }
+    let path = path.canonicalize().map_err(err)?;
+    let is_image = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
+    if !is_image || !app.asset_protocol_scope().is_allowed(&path) {
+        return Err("not allowed".into());
+    }
+    std::fs::read(&path).map(tauri::ipc::Response::new).map_err(err)
+}
+
 #[tauri::command]
 fn watch_files(app: AppHandle, state: State<WatchState>, paths: Vec<String>) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(err)?;
@@ -274,6 +298,15 @@ mod devdrive {
 
     pub fn start(app: &AppHandle) {
         let Ok(fifo) = std::env::var("MDREADER_DRIVE") else { return };
+        // Console messages, including the preview frame's, go to stdout.
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.with_webview(|pv| {
+                use webkit2gtk::SettingsExt;
+                if let Some(settings) = pv.inner().settings() {
+                    settings.set_enable_write_console_messages_to_stdout(true);
+                }
+            });
+        }
         let app = app.clone();
         std::thread::spawn(move || {
             loop {
@@ -372,6 +405,7 @@ fn main() {
             open_link,
             export_html,
             watch_files,
+            read_image,
             startup_file,
             app_version,
             debug_log,

@@ -158,6 +158,12 @@ window.addEventListener("message", (e) => {
     case "scroll":
       followPreview(m.line, m.f);
       break;
+    case "image": // Linux: see putImage in core/src/runtime.js
+      invoke("read_image", { url: String(m.url) })
+        .catch(() => null)
+        .then((bytes) => call("putImage", m.url, bytes))
+        .catch(() => {});
+      break;
     case "link":
       queued(() => followLink(m.href));
       break;
@@ -332,10 +338,8 @@ async function openFiles(paths) {
   if (!target) return false;
   syncWatches();
   await switchTo(target);
-  if (blank && blank !== target) {
-    tabs.splice(tabs.indexOf(blank), 1);
-    renderTabs();
-  }
+  if (blank && blank !== target) tabs.splice(tabs.indexOf(blank), 1);
+  renderTabs(); // new tabs, even when the one shown has not changed
   return true;
 }
 

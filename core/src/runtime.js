@@ -252,7 +252,14 @@ window.mdr = (() => {
 
   async function exportBody() {
     await pending;
-    return content().innerHTML;
+    const copy = content().cloneNode(true);
+    // Images shown from app-supplied bytes get their own paths back.
+    for (const img of copy.querySelectorAll("img[data-mdr-src]")) {
+      img.setAttribute("src", img.dataset.mdrSrc);
+      img.removeAttribute("data-mdr-src");
+      img.removeAttribute("data-mdr-asset");
+    }
+    return copy.innerHTML;
   }
 
   // _lineY is only for the app's test hooks.
@@ -276,10 +283,56 @@ window.mdr = (() => {
       }
       return loaded.get(url);
     };
+    // Linux: WebKit won't show asset: URLs to this sandboxed page (origin
+    // null), so images come from the app as bytes and show as blob: URLs,
+    // kept for the life of the page. Windows loads http://asset.localhost.
+    const viaApp = document.baseURI.startsWith("asset:");
+    const images = new Map(); // asset URL -> blob URL, or null while asked for
+    const MIME = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+      svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif",
+    };
+    const routeImage = (img) => {
+      const src = img.getAttribute("src");
+      let url;
+      try {
+        url = new URL(src, document.baseURI).href;
+      } catch (_) {
+        return;
+      }
+      if (!url.startsWith("asset:")) return;
+      img.removeAttribute("src"); // before it is in the page, so it never tries asset:
+      img.dataset.mdrSrc = src;
+      img.dataset.mdrAsset = url;
+      const blob = images.get(url);
+      if (blob) img.src = blob;
+      else if (!images.has(url)) {
+        images.set(url, null);
+        post({ type: "image", url });
+      }
+    };
+
     Object.assign(api, {
       update(html) {
-        content().innerHTML = html;
+        if (viaApp) {
+          const t = document.createElement("template");
+          t.innerHTML = html;
+          t.content.querySelectorAll("img[src]").forEach(routeImage);
+          content().replaceChildren(t.content);
+        } else {
+          content().innerHTML = html;
+        }
         return after();
+      },
+      // The app's answer to an "image" message: the bytes, or null.
+      putImage(url, bytes) {
+        if (!bytes) return;
+        const ext = url.split(/[?#]/)[0].split(".").pop().toLowerCase();
+        const blob = URL.createObjectURL(new Blob([bytes], { type: MIME[ext] || "" }));
+        images.set(url, blob);
+        for (const img of content().querySelectorAll("img[data-mdr-asset]")) {
+          if (img.dataset.mdrAsset === url) img.src = blob;
+        }
       },
       async loadLibs(libs) {
         await Promise.all(libs.map((l) => load(l.url, l.css)));
