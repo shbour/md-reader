@@ -290,6 +290,13 @@ window.mdr = (() => {
       setZoom(z) {
         document.documentElement.style.zoom = String(z);
       },
+      // Kept per tab by the app while another document is shown.
+      getScrollY() {
+        return window.scrollY;
+      },
+      setScrollY(y) {
+        window.scrollTo(0, y);
+      },
       scrollToAnchor(id) {
         const el = document.getElementById(id);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });

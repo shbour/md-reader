@@ -6,3 +6,6 @@ CLAUDE.md
 AGENTS.md
 .hermes.md
 *.local
+
+# Session handoff notes, local only
+/HANDOFF.md

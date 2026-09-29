@@ -99,6 +99,35 @@ button:disabled { opacity: 0.45; pointer-events: none; }
 .menu kbd { font: 12px inherit; color: var(--muted); margin-left: 24px; }
 .menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 
+/* ---- tabs: shown with two or more documents open ---- */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none; /* the mouse wheel scrolls it sideways */
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  flex: 0 1 200px;
+  min-width: 96px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 4px 0 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted);
+}
+.tab:hover { background: var(--hover); }
+.tab.active { background: var(--surface); color: var(--fg); border-color: var(--border); margin-bottom: -1px; }
+.tab-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-close { flex: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 4px; opacity: 0.7; }
+.tab-close:hover { opacity: 1; }
+.tab-close svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+
 /* ---- search / banner ---- */
 .searchbar, .banner {
   display: flex;

@@ -16,7 +16,7 @@ const el = {
   searchbar: $("searchbar"), search: $("search"), count: $("match-count"),
   banner: $("banner"), toc: $("toc"), tocList: $("toc-list"),
   editorPane: $("editor-pane"), editor: $("editor"), splitter: $("splitter"),
-  work: $("work"), preview: $("preview"), toast: $("toast"),
+  work: $("work"), preview: $("preview"), toast: $("toast"), tabs: $("tabs"),
 };
 
 const APP = "Markdown Reader";
@@ -42,17 +42,27 @@ const savePrefs = () => {
 
 // ------------------------------------------------------------------ state
 
-const state = {
+// One per tab. `state` is the tab on screen; the others keep their editor
+// state (text, undo history, cursor) and scroll positions until shown.
+const newTab = () => ({
   path: null, // null: unsaved document
   name: null,
   dir: null,
-  saved: "", // text as last read from / written to disk
+  saved: "", // text as last read from / written to disk, with "\n" line breaks
+  eol: "\n", // line break written back to disk: kept from the file as opened
   editing: false,
   toc: [],
   hasMath: false,
   hasMermaid: false,
-  history: [],
-};
+  history: [], // Back, within this tab
+  editorState: null, // CodeMirror state while the tab is in the background
+  editorScroll: null,
+  previewY: 0,
+  changedOnDisk: false, // while in the background
+  banner: false,
+});
+const tabs = [newTab()];
+let state = tabs[0];
 
 // ----------------------------------------------------------------- editor
 
@@ -88,6 +98,11 @@ const extensions = () => [
 const view = new CM.EditorView({ parent: el.editor, state: CM.EditorState.create({ doc: "", extensions: extensions() }) });
 const text = () => view.state.doc.toString();
 const dirty = () => text() !== state.saved;
+
+// CodeMirror keeps "\n" line breaks, so text from disk is compared in that
+// form; a Windows (CRLF) file is written back with CRLF.
+const toLF = (s) => s.replace(/\r\n?/g, "\n");
+const eolOf = (s) => (s.includes("\r\n") ? "\r\n" : "\n");
 
 // A fresh document: new undo history, cursor at the top.
 function resetEditor(doc) {
@@ -144,7 +159,7 @@ window.addEventListener("message", (e) => {
       followPreview(m.line, m.f);
       break;
     case "link":
-      followLink(m.href);
+      queued(() => followLink(m.href));
       break;
     case "key":
       handleKey(m);
@@ -152,8 +167,17 @@ window.addEventListener("message", (e) => {
   }
 });
 
+// The preview page serves one folder (relative images resolve against it), so
+// documents in the same folder share it, and the libraries it has loaded.
+let shellDir;
+
+function ensureShell() {
+  return shellDir === state.dir ? frameReady : loadShell();
+}
+
 // Load a fresh preview page for the current document's folder.
 async function loadShell() {
+  shellDir = state.dir;
   for (const p of pending.values()) p.reject(new Error("preview reloaded"));
   pending.clear();
   libs = { katex: false, mermaid: false };
@@ -211,6 +235,8 @@ async function renderNow() {
 
 // ------------------------------------------------------------- documents
 
+let titleQueue = Promise.resolve();
+
 function updateTitle() {
   const d = dirty();
   const name = state.path ? state.name : state.editing || d ? "Untitled" : APP;
@@ -218,7 +244,12 @@ function updateTitle() {
   // The folder is right-to-left so long paths lose their start, not their
   // end, to the ellipsis; the marks keep "/" and "\" where they belong.
   el.dir.textContent = state.dir ? `\u200e${state.dir}\u200e` : "";
-  appWindow.setTitle(name === APP ? APP : `${d ? "• " : ""}${name} — ${APP}`);
+  const title = name === APP ? APP : `${d ? "• " : ""}${name} — ${APP}`;
+  // In order: on Windows two IPC calls can finish out of order, and the
+  // startup title could then overwrite the document's.
+  titleQueue = titleQueue.then(() => appWindow.setTitle(title)).catch(() => {});
+  const label = el.tabs.querySelector(".tab.active .tab-name");
+  if (label) label.textContent = tabLabel(state);
   el.save.hidden = !(state.editing || d);
   el.save.disabled = !d && !!state.path;
 }
@@ -241,45 +272,227 @@ async function confirmDiscard() {
   return answer === "No" || answer === "Don't Save";
 }
 
-async function openPath(path, { fragment = null, record = true, force = false } = {}) {
-  if (!force && !(await confirmDiscard())) return false;
-  let doc;
+async function readDoc(path) {
   try {
-    doc = await invoke("read_document", { path });
+    return await invoke("read_document", { path });
   } catch (e) {
     toast(`Could not open ${path}: ${e}`);
-    return false;
+    return null;
   }
+}
+
+// Show `doc` in the current tab; `record` lets Back return to the one before.
+async function showDoc(doc, { fragment = null, record = true } = {}) {
   if (record && state.path && state.path !== doc.path) state.history.push(state.path);
   const firstDoc = !state.path;
-  Object.assign(state, { path: doc.path, name: doc.name, dir: doc.dir, saved: doc.text });
-  resetEditor(doc.text);
+  Object.assign(state, {
+    path: doc.path, name: doc.name, dir: doc.dir, saved: toLF(doc.text), eol: eolOf(doc.text), changedOnDisk: false,
+  });
+  resetEditor(state.saved);
   if (doc.lossy) toast("This file is not valid UTF-8; some characters were replaced");
   el.banner.hidden = true;
   el.back.hidden = state.history.length === 0;
   updateTitle();
-  await loadShell();
+  renderTabs();
+  await ensureShell();
   await renderNow();
   if (firstDoc || record) applySidebarPref();
-  invoke("watch_file", { path: doc.path }).catch((e) => console.warn("watch:", e));
+  syncWatches();
   if (fragment) call("scrollToAnchor", fragment);
+  else call("setScrollY", 0).catch(() => {}); // the preview page may be the previous document's
+}
+
+// Replace the current tab's document (links, Back, Reload).
+async function openPath(path, { fragment = null, record = true, force = false } = {}) {
+  if (!force && !(await confirmDiscard())) return false;
+  const doc = await readDoc(path);
+  if (!doc) return false;
+  await showDoc(doc, { fragment, record });
   return true;
 }
 
+const IS_WINDOWS = navigator.userAgent.includes("Windows");
+const samePath = (a, b) => !!a && !!b && (IS_WINDOWS ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+// Open files in tabs of their own (or the tabs already showing them) and show
+// the last. The others wait in the background: drawing a document can take a
+// while (diagrams, maths), so only the one on screen is drawn.
+async function openFiles(paths) {
+  const blank = !state.path && !dirty() ? state : null; // e.g. the start-up window
+  let target = null;
+  for (const path of paths) {
+    let tab = tabs.find((t) => samePath(t.path, path));
+    if (!tab) {
+      const doc = await readDoc(path);
+      if (!doc) continue;
+      tab = tabs.find((t) => samePath(t.path, doc.path)) || addTab(doc);
+    }
+    target = tab;
+  }
+  if (!target) return false;
+  syncWatches();
+  await switchTo(target);
+  if (blank && blank !== target) {
+    tabs.splice(tabs.indexOf(blank), 1);
+    renderTabs();
+  }
+  return true;
+}
+
+const openInTab = (path) => openFiles([path]);
+
 async function chooseFile() {
-  const path = await dialog.open({ multiple: false, directory: false, filters: FILTERS });
-  if (path) openPath(path);
+  const picked = await dialog.open({ multiple: true, directory: false, filters: FILTERS });
+  if (picked) await openFiles([picked].flat());
 }
 
 async function newDocument() {
-  if (!(await confirmDiscard())) return;
-  Object.assign(state, { path: null, name: null, dir: null, saved: "", history: [] });
-  invoke("watch_file", { path: null });
+  if (state.path || dirty()) await switchTo(addTab());
+  Object.assign(state, { path: null, name: null, dir: null, saved: "", eol: "\n", history: [] });
   resetEditor("");
   el.back.hidden = true;
   el.banner.hidden = true;
-  await loadShell();
+  syncWatches();
+  renderTabs();
+  await ensureShell();
   setEditing(true);
+}
+
+// ------------------------------------------------------------------ tabs
+
+const tabDirty = (t) => (t === state ? text() : t.editorState?.doc.toString() ?? t.saved) !== t.saved;
+const tabLabel = (t) => (tabDirty(t) ? "• " : "") + (t.name || "Untitled");
+
+// A new tab at the end, holding `doc` if given (shown later).
+function addTab(doc = null) {
+  const t = newTab();
+  if (doc) {
+    Object.assign(t, { path: doc.path, name: doc.name, dir: doc.dir, saved: toLF(doc.text), eol: eolOf(doc.text) });
+    if (doc.lossy) toast(`${doc.name} is not valid UTF-8; some characters were replaced`);
+  }
+  tabs.push(t);
+  return t;
+}
+
+// Keep the on-screen tab's editor and scroll positions while another is shown.
+async function stashTab() {
+  state.editorState = view.state;
+  state.editorScroll = view.scrollSnapshot();
+  state.banner = !el.banner.hidden;
+  state.previewY = state.editing ? 0 : await call("getScrollY").catch(() => 0);
+}
+
+// Put `state`, the current tab, on screen.
+async function showTab() {
+  const t = state;
+  view.setState(t.editorState || CM.EditorState.create({ doc: t.saved, extensions: extensions() }));
+  t.editorState = null;
+  view.dispatch({ effects: themeSlot.reconfigure(editorTheme()) }); // the theme may have changed meanwhile
+  el.banner.hidden = !t.banner;
+  el.back.hidden = t.history.length === 0;
+  applyEditing();
+  if (t.editorScroll) view.dispatch({ effects: t.editorScroll });
+  updateTitle();
+  renderTabs();
+  await ensureShell();
+  await renderNow();
+  if (!t.editing) call("setScrollY", t.previewY).catch(() => {});
+  applySidebarPref();
+  if (!el.searchbar.hidden) refreshSearch(false);
+  if (t.editing) view.focus();
+  if (t.changedOnDisk) {
+    t.changedOnDisk = false;
+    checkDisk();
+  }
+}
+
+async function switchTo(tab) {
+  if (tab === state || !tabs.includes(tab)) return;
+  await stashTab();
+  state = tab;
+  await showTab();
+}
+
+function stepTab(by) {
+  const i = tabs.indexOf(state);
+  return switchTo(tabs[(i + by + tabs.length) % tabs.length]);
+}
+
+// Closing the last tab closes the window, which asks about unsaved changes.
+async function closeTab(tab = state) {
+  if (tabs.length === 1) return appWindow.close();
+  if (tabDirty(tab)) {
+    await switchTo(tab); // show what would be lost
+    if (!(await confirmDiscard())) return;
+  }
+  const i = tabs.indexOf(tab);
+  tabs.splice(i, 1);
+  syncWatches();
+  if (tab === state) {
+    state = tabs[Math.min(i, tabs.length - 1)];
+    await showTab();
+  } else {
+    renderTabs();
+  }
+}
+
+function renderTabs() {
+  el.tabs.hidden = tabs.length < 2;
+  el.tabs.replaceChildren(
+    ...tabs.map((t, i) => {
+      const tab = document.createElement("div");
+      tab.className = t === state ? "tab active" : "tab";
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(t === state));
+      tab.dataset.index = i;
+      tab.title = t.path || "Untitled";
+      const name = document.createElement("span");
+      name.className = "tab-name";
+      name.textContent = tabLabel(t);
+      const close = document.createElement("button");
+      close.className = "tab-close";
+      close.title = "Close (Ctrl+W)";
+      close.setAttribute("aria-label", `Close ${t.name || "Untitled"}`);
+      close.innerHTML = '<svg viewBox="0 0 20 20"><path d="M6 6l8 8M14 6l-8 8"/></svg>';
+      tab.append(name, close);
+      return tab;
+    })
+  );
+  el.tabs.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+const tabAt = (e) => tabs[e.target.closest(".tab")?.dataset.index];
+el.tabs.addEventListener("click", (e) => {
+  const t = tabAt(e);
+  if (t) queued(() => (e.target.closest(".tab-close") ? closeTab(t) : switchTo(t)));
+});
+el.tabs.addEventListener("auxclick", (e) => {
+  const t = tabAt(e);
+  if (t && e.button === 1) queued(() => closeTab(t));
+});
+el.tabs.addEventListener(
+  "wheel",
+  (e) => {
+    if (!e.deltaY || e.shiftKey) return;
+    el.tabs.scrollLeft += e.deltaY;
+    e.preventDefault();
+  },
+  { passive: false }
+);
+el.tabs.addEventListener("mousedown", (e) => {
+  if (e.button === 1) e.preventDefault(); // no autoscroll on middle click
+});
+
+function syncWatches() {
+  const paths = [...new Set(tabs.map((t) => t.path).filter(Boolean))];
+  invoke("watch_files", { paths }).catch((e) => console.warn("watch:", e));
+}
+
+// Tab changes run one at a time, in order: each one swaps what is on screen.
+let tabQueue = Promise.resolve();
+function queued(fn) {
+  tabQueue = tabQueue.then(fn).catch((e) => toast(String(e.message || e)));
+  return tabQueue;
 }
 
 async function save() {
@@ -297,8 +510,9 @@ async function saveAs() {
     state.path = path;
     state.name = path.split(/[\\/]/).pop();
     state.dir = path.slice(0, path.length - state.name.length).replace(/[\\/]$/, "");
-    invoke("watch_file", { path }).catch(() => {});
+    syncWatches();
     updateTitle();
+    renderTabs();
     await reloadPreview(); // relative images now resolve against the new folder
   }
   return true;
@@ -307,7 +521,7 @@ async function saveAs() {
 async function writeTo(path) {
   const t = text();
   try {
-    await invoke("write_document", { path, text: t });
+    await invoke("write_document", { path, text: state.eol === "\n" ? t : t.replace(/\n/g, state.eol) });
   } catch (e) {
     toast(`Could not save: ${e}`);
     return false;
@@ -321,26 +535,38 @@ async function writeTo(path) {
 // The file changed on disk: follow it, unless there are unsaved edits.
 let diskTimer = 0;
 listen("file-changed", (e) => {
-  if (e.payload !== state.path) return;
+  const tab = tabs.find((t) => t.path === e.payload);
+  if (!tab) return;
+  if (tab !== state) {
+    tab.changedOnDisk = true; // looked at when the tab is shown
+    return;
+  }
   clearTimeout(diskTimer);
   diskTimer = setTimeout(checkDisk, 250);
 });
 
 async function checkDisk() {
-  if (!state.path) return;
+  const tab = state;
+  if (!tab.path) return;
   let doc;
   try {
-    doc = await invoke("read_document", { path: state.path });
+    doc = await invoke("read_document", { path: tab.path });
   } catch (_) {
     return; // deleted or mid-write; a later event will follow
   }
-  if (doc.text === state.saved) return;
+  if (tab !== state) {
+    tab.changedOnDisk = true; // switched away meanwhile
+    return;
+  }
+  const t = toLF(doc.text);
+  if (t === state.saved) return;
   if (dirty()) {
     el.banner.hidden = false;
     return;
   }
-  state.saved = doc.text;
-  replaceEditorText(doc.text);
+  state.saved = t;
+  state.eol = eolOf(doc.text);
+  replaceEditorText(t);
   updateTitle();
   renderNow();
 }
@@ -369,7 +595,14 @@ async function followLink(href) {
     if (r.path === state.path) {
       if (r.fragment) call("scrollToAnchor", r.fragment);
     } else {
-      openPath(r.path, { fragment: r.fragment });
+      // A document already open in another tab is shown there, not twice.
+      const open = tabs.find((t) => samePath(t.path, r.path));
+      if (open) {
+        await switchTo(open);
+        if (r.fragment) call("scrollToAnchor", r.fragment);
+      } else {
+        await openPath(r.path, { fragment: r.fragment });
+      }
     }
   }
 }
@@ -378,14 +611,19 @@ async function followLink(href) {
 
 function setEditing(on) {
   state.editing = on;
-  el.edit.setAttribute("aria-pressed", String(on));
-  el.editorPane.hidden = !on;
-  el.splitter.hidden = !on;
-  applySplit();
+  applyEditing();
   updateTitle();
   renderNow();
   if (!el.searchbar.hidden) refreshSearch(false);
   if (on) view.focus();
+}
+
+function applyEditing() {
+  const on = state.editing;
+  el.edit.setAttribute("aria-pressed", String(on));
+  el.editorPane.hidden = !on;
+  el.splitter.hidden = !on;
+  applySplit();
 }
 
 function applySplit() {
@@ -458,9 +696,13 @@ function followPreview(line, f) {
 
 // -------------------------------------------------------------- contents
 
+let shownToc = "[]";
+
 function setToc(toc) {
-  if (JSON.stringify(toc) === JSON.stringify(state.toc)) return;
   state.toc = toc;
+  const key = JSON.stringify(toc);
+  if (key === shownToc) return; // tabs share the list: compare with what it shows
+  shownToc = key;
   el.tocList.replaceChildren();
   const min = Math.min(...toc.map((h) => h.level), 6);
   toc.forEach((h) => {
@@ -602,8 +844,14 @@ async function withLightPage(fn) {
 }
 
 // window.print() in the preview; WebView2's dialog includes "Save as PDF".
-function printPreview() {
-  return withLightPage(() => call("print"));
+// The page title names the PDF and fills the page header.
+async function printPreview() {
+  document.title = (state.name || "Untitled").replace(/\.[^.]+$/, "");
+  try {
+    return await withLightPage(() => call("print"));
+  } finally {
+    document.title = APP;
+  }
 }
 
 async function exportHtml() {
@@ -660,12 +908,14 @@ const actions = {
   edit: () => setEditing(!state.editing),
   toc: toggleSidebar,
   back: goBack,
-  close: () => appWindow.close(),
+  close: () => closeTab(),
+  "next-tab": () => stepTab(1),
+  "prev-tab": () => stepTab(-1),
 };
 
 function run(name) {
   closeMenu();
-  Promise.resolve(actions[name]()).catch((e) => toast(String(e.message || e)));
+  queued(() => actions[name]());
 }
 
 function closeMenu() {
@@ -706,6 +956,10 @@ function handleKey(k) {
     : alt
       ? { ArrowLeft: "back" }
       : { F9: "toc", F3: shift ? "find-prev" : "find-next" };
+  if (ctrl && (key === "Tab" || key === "PageDown" || key === "PageUp")) {
+    run(key === "PageUp" || (key === "Tab" && shift) ? "prev-tab" : "next-tab");
+    return true;
+  }
   if (ctrl && key === "g") {
     stepSearch(!shift);
     return true;
@@ -737,23 +991,37 @@ document.addEventListener("contextmenu", (e) => {
 
 // ------------------------------------------------- window integration
 
-appWindow.onCloseRequested(async (event) => {
-  if (!dirty()) return;
+// Ask about each tab with unsaved changes, showing it first.
+appWindow.onCloseRequested((event) => {
+  if (!tabs.some(tabDirty)) return;
   event.preventDefault();
-  if (await confirmDiscard()) await appWindow.destroy();
+  queued(async () => {
+    for (const t of [...tabs]) {
+      if (!tabDirty(t)) continue;
+      await switchTo(t);
+      if (!(await confirmDiscard())) return;
+    }
+    await appWindow.destroy();
+  });
 });
 
 webview.onDragDropEvent((e) => {
-  if (e.payload.type === "drop" && e.payload.paths.length) openPath(e.payload.paths[0]);
+  if (e.payload.type !== "drop") return;
+  queued(async () => {
+    for (const path of e.payload.paths) await openInTab(path);
+  });
 });
 
 // A second launch (e.g. double-clicking another .md file) sends its file here.
-listen("open-file", (e) => openPath(e.payload));
+listen("open-file", (e) => queued(() => openInTab(e.payload)));
 
 // For tests driving a debug build (see devdrive in main.rs).
 window.mdrApp = {
-  view, state, call, openPath, setEditing, refreshSearch, stepSearch, openSearch, followLink, goBack,
-  writeTo, exportHtmlTo, dirty,
+  view, call, openPath, setEditing, refreshSearch, stepSearch, openSearch, followLink, goBack,
+  writeTo, exportHtmlTo, dirty, tabs, openInTab, openFiles, switchTo, closeTab, queued,
+  get state() {
+    return state;
+  },
 };
 
 // ----------------------------------------------------------------- start

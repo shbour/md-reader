@@ -84,7 +84,7 @@ blockquote {
 }
 
 code, pre, kbd, samp {
-  font-family: "Adwaita Mono", "JetBrains Mono", "Source Code Pro", "Noto Sans Mono", monospace;
+  font-family: "Adwaita Mono", "JetBrains Mono", "Source Code Pro", "Noto Sans Mono", "Cascadia Mono", Consolas, monospace;
   font-size: 85%;
 }
 code {

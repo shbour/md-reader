@@ -195,24 +195,34 @@ fn export_html(dest: String, title: String, body: String, has_math: bool, doc_di
 /// path. The folder is watched, not the file, so editors that save by
 /// writing a new file and renaming it over the old one are noticed too.
 #[tauri::command]
-fn watch_file(app: AppHandle, state: State<WatchState>, path: Option<String>) -> Result<(), String> {
+fn watch_files(app: AppHandle, state: State<WatchState>, paths: Vec<String>) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(err)?;
     *slot = None;
-    let Some(path) = path else { return Ok(()) };
-    let target = PathBuf::from(&path);
-    let (Some(name), Some(dir)) = (target.file_name().map(|n| n.to_os_string()), target.parent()) else {
+    // Watch each folder (not the file): saving via rename replaces the file.
+    let targets: Vec<(PathBuf, String)> = paths.into_iter().map(|p| (PathBuf::from(&p), p)).collect();
+    let mut dirs: Vec<PathBuf> = targets.iter().filter_map(|(t, _)| t.parent().map(Path::to_path_buf)).collect();
+    dirs.sort();
+    dirs.dedup();
+    if dirs.is_empty() {
         return Ok(());
-    };
+    }
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(ev) = res else { return };
         let relevant = matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_))
             && !matches!(ev.kind, EventKind::Modify(notify::event::ModifyKind::Metadata(_)));
-        if relevant && ev.paths.iter().any(|p| p.file_name() == Some(name.as_os_str())) {
-            let _ = app.emit("file-changed", &path);
+        if !relevant {
+            return;
+        }
+        for (target, path) in &targets {
+            if ev.paths.iter().any(|p| p.file_name() == target.file_name() && p.parent() == target.parent()) {
+                let _ = app.emit("file-changed", path);
+            }
         }
     })
     .map_err(err)?;
-    watcher.watch(dir, RecursiveMode::NonRecursive).map_err(err)?;
+    for dir in &dirs {
+        watcher.watch(dir, RecursiveMode::NonRecursive).map_err(err)?;
+    }
     *slot = Some(watcher);
     Ok(())
 }
@@ -299,6 +309,35 @@ mod devdrive {
     }
 }
 
+/// A window rectangle as (x, y, width, height) in physical pixels.
+type Rect = (i32, i32, u32, u32);
+
+/// Where to put a window so all of it is inside `area` (the monitor minus the
+/// taskbar), or None when it already is. The default size is taller than a
+/// 1366x768 laptop screen, and a saved size may come from a bigger monitor.
+fn fit_rect(win: Rect, area: Rect) -> Option<Rect> {
+    let (ax, ay, aw, ah) = area;
+    let (w, h) = (win.2.min(aw), win.3.min(ah));
+    let clamp = |p: i32, len: u32, start: i32, avail: u32| p.clamp(start, start + (avail - len) as i32);
+    let fitted = (clamp(win.0, w, ax, aw), clamp(win.1, h, ay, ah), w, h);
+    (fitted != win).then_some(fitted)
+}
+
+fn fit_to_screen(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = window.current_monitor()? else { return Ok(()) };
+    let area = monitor.work_area();
+    let (pos, outer, inner) = (window.outer_position()?, window.outer_size()?, window.inner_size()?);
+    let win = (pos.x, pos.y, outer.width, outer.height);
+    let area = (area.position.x, area.position.y, area.size.width, area.size.height);
+    if let Some((x, y, w, h)) = fit_rect(win, area) {
+        // set_size takes the inner size: take off the title bar and borders.
+        let frame = (outer.width - inner.width, outer.height - inner.height);
+        window.set_size(tauri::PhysicalSize::new(w - frame.0, h - frame.1))?;
+        window.set_position(tauri::PhysicalPosition::new(x, y))?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         // Must be first: a second launch (double-clicking another .md file)
@@ -317,6 +356,10 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(WatchState::default())
         .setup(|_app| {
+            // After the window-state plugin has restored the saved geometry.
+            if let Some(window) = _app.get_webview_window("main") {
+                let _ = fit_to_screen(&window);
+            }
             #[cfg(all(debug_assertions, target_os = "linux"))]
             devdrive::start(_app.handle());
             Ok(())
@@ -328,7 +371,7 @@ fn main() {
             preview_page,
             open_link,
             export_html,
-            watch_file,
+            watch_files,
             startup_file,
             app_version,
             debug_log,
@@ -340,6 +383,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_are_kept_on_screen() {
+        let laptop = (0, 0, 1366, 720); // 768 minus a 48 px taskbar
+        assert_eq!(fit_rect((100, 50, 1000, 600), laptop), None);
+        // Too tall: shrunk to the work area and moved up.
+        assert_eq!(fit_rect((133, 0, 1100, 811), laptop), Some((133, 0, 1100, 720)));
+        // Fits, but hangs off the bottom right: moved in.
+        assert_eq!(fit_rect((800, 400, 1000, 600), laptop), Some((366, 120, 1000, 600)));
+        // Bigger than the screen both ways, on a second monitor to the left.
+        assert_eq!(fit_rect((-3000, 10, 2500, 1400), (-1920, 0, 1920, 1040)), Some((-1920, 0, 1920, 1040)));
+    }
 
     #[test]
     fn asset_urls_keep_path_structure() {

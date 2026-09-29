@@ -33,6 +33,7 @@
       <button role="menuitem" data-action="new">New document<kbd>Ctrl+N</kbd></button>
       <button role="menuitem" data-action="open">Open…<kbd>Ctrl+O</kbd></button>
       <button role="menuitem" data-action="save-as">Save as…<kbd>Ctrl+Shift+S</kbd></button>
+      <button role="menuitem" data-action="close">Close<kbd>Ctrl+W</kbd></button>
       <hr>
       <button role="menuitem" data-action="print">Print or save as PDF…<kbd>Ctrl+P</kbd></button>
       <button role="menuitem" data-action="export-html">Export as HTML…</button>
@@ -46,6 +47,8 @@
     </div>
   </div>
 </header>
+
+<div id="tabs" class="tabs" role="tablist" aria-label="Open documents" hidden></div>
 
 <div id="searchbar" class="searchbar" hidden>
   <input id="search" type="search" placeholder="Find in document" spellcheck="false" autocomplete="off">
