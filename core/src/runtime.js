@@ -193,7 +193,11 @@ window.mdr = (() => {
     if (!findText) return 0;
     const needle = findText.toLowerCase();
     const ranges = [];
-    const walker = document.createTreeWalker(content(), NodeFilter.SHOW_TEXT);
+    // Skip KaTeX's copy for screen readers: it is never shown, so its
+    // matches would count and scroll to nothing.
+    const walker = document.createTreeWalker(content(), NodeFilter.SHOW_TEXT, (n) =>
+      n.parentElement && n.parentElement.closest(".katex-mathml") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    );
     for (let n; (n = walker.nextNode()); ) {
       const hay = n.data.toLowerCase();
       if (hay.length !== n.data.length) continue; // case-folding changed offsets
@@ -216,6 +220,10 @@ window.mdr = (() => {
     if (!n) return { index: 0, total: 0 };
     findIndex = forward ? (findIndex + 1) % n : (findIndex - 1 + n) % n;
     const r = findRanges[findIndex];
+    // A match inside collapsed <details> is shown by opening them.
+    for (let d = r.startContainer.parentElement; (d = d && d.closest("details:not([open])")); d = d.parentElement) {
+      d.open = true;
+    }
     CSS.highlights.set("mdr-find-current", new Highlight(r));
     const rect = r.getBoundingClientRect();
     window.scrollTo({ top: window.scrollY + rect.top - window.innerHeight * 0.3, behavior: "smooth" });
