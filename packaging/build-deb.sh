@@ -19,6 +19,8 @@ install -Dm644 data/io.github.mdreader.MdReader.desktop "$root/usr/share/applica
 install -Dm644 data/io.github.mdreader.MdReader.svg "$root/usr/share/icons/hicolor/scalable/apps/io.github.mdreader.MdReader.svg"
 install -Dm644 data/io.github.mdreader.MdReader.metainfo.xml "$root/usr/share/metainfo/io.github.mdreader.MdReader.metainfo.xml"
 install -Dm644 README.md "$root/usr/share/doc/markdown-reader/README.md"
+# Ubuntu 23.10+ needs this for WebKitGTK's sandbox (see the file).
+install -Dm644 packaging/apparmor/mdreader "$root/etc/apparmor.d/mdreader"
 {
     echo "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/"
     echo "Upstream-Name: md-reader"
@@ -60,6 +62,19 @@ Description: Read, edit and preview Markdown files
  (KaTeX), diagrams (Mermaid), a table of contents, search, print, and export
  to PDF or a self-contained HTML page.
 CONTROL
+
+echo /etc/apparmor.d/mdreader > "$root/DEBIAN/conffiles"
+cat > "$root/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+# Load the AppArmor profile now, not at the next boot. Where AppArmor is
+# older or absent the profile isn't needed, so a failure here is ignored.
+if [ "$1" = configure ] && command -v apparmor_parser >/dev/null 2>&1 \
+    && [ -d /sys/kernel/security/apparmor ]; then
+    apparmor_parser -r -T -W /etc/apparmor.d/mdreader || true
+fi
+POSTINST
+chmod 755 "$root/DEBIAN/postinst"
 
 mkdir -p dist
 out="dist/markdown-reader_${version}_${arch}.deb"
