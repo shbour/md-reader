@@ -4,6 +4,7 @@
 # ones. Dependencies come from dpkg-shlibdeps, i.e. the libraries the binary
 # links. Writes dist/markdown-reader_<version>_<arch>.deb
 set -euo pipefail
+umask 022
 cd "$(dirname "$0")/.."
 [[ -f ~/.cargo/env ]] && . ~/.cargo/env
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -12,6 +13,7 @@ cargo build --release --locked -p md-reader
 
 root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
+chmod 755 "$root" # becomes / in the package
 install -Dm755 target/release/mdreader "$root/usr/bin/mdreader"
 install -Dm644 data/io.github.mdreader.MdReader.desktop "$root/usr/share/applications/io.github.mdreader.MdReader.desktop"
 install -Dm644 data/io.github.mdreader.MdReader.svg "$root/usr/share/icons/hicolor/scalable/apps/io.github.mdreader.MdReader.svg"
@@ -26,6 +28,13 @@ install -Dm644 README.md "$root/usr/share/doc/markdown-reader/README.md"
     echo "License: MIT"
     sed 's/^$/./; s/^/ /' LICENSE
 } > "$root/usr/share/doc/markdown-reader/copyright"
+{
+    echo "markdown-reader ($version) unstable; urgency=medium"
+    echo
+    echo "  * Release $version: https://github.com/shbour/md-reader/releases/tag/v$version"
+    echo
+    echo " -- shbour <23043611+shbour@users.noreply.github.com>  $(date -R -d "$(git log -1 --format=%cI 2>/dev/null || date -R)")"
+} | gzip -9n > "$root/usr/share/doc/markdown-reader/changelog.gz"
 
 # dpkg-shlibdeps wants a debian/control to sit next to it.
 work=$(mktemp -d)
