@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mdreader.MdReader</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Markdown Reader</name>
+  <summary>Read, edit and preview Markdown files</summary>
+  <developer id="io.github.shbour">
+    <name>shbour</name>
+  </developer>
+  <description>
+    <p>
+      Markdown Reader opens Markdown files as clean, readable pages and lets
+      you edit them side by side with a live preview.
+    </p>
+    <ul>
+      <li>GitHub-flavoured Markdown: tables, task lists, footnotes, alerts</li>
+      <li>Math with KaTeX and diagrams with Mermaid</li>
+      <li>Side-by-side editing with scroll sync, and search</li>
+      <li>Local images, links between documents, and a table of contents</li>
+      <li>Print, and export to PDF or a self-contained HTML page</li>
+      <li>Follows changes made to the file by other programs</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.mdreader.MdReader.desktop</launchable>
+  <url type="homepage">https://github.com/shbour/md-reader</url>
+  <url type="bugtracker">https://github.com/shbour/md-reader/issues</url>
+  <provides>
+    <binary>mdreader</binary>
+    <mediatype>text/markdown</mediatype>
+  </provides>
+  <categories>
+    <category>Utility</category>
+    <category>TextTools</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.2.0" date="2026-09-29"/>
+  </releases>
+</component>

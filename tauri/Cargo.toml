@@ -1,0 +1,31 @@
+[package]
+name = "mdreader-tauri"
+description = "Markdown Reader for Windows (and macOS/Linux) built with Tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "markdown-reader"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mdreader-core = { path = "../core" }
+notify = "8.2.0"
+percent-encoding = "2.3.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tauri = { version = "2.11.5", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-single-instance = "2.4.4"
+tauri-plugin-window-state = "2.4.1"
+
+# Only for the Linux debug-build test driver (see `devdrive` in main.rs);
+# same versions Tauri already links.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "=2.0.2"
+cairo-rs = { version = "=0.18.5", features = ["png"] }

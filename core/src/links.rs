@@ -1,8 +1,8 @@
 //! Deciding what a clicked link in the preview should do.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use gtk::gio::prelude::FileExt;
+use url::Url;
 
 #[derive(Debug, PartialEq)]
 pub enum LinkAction {
@@ -39,7 +39,7 @@ pub fn classify(uri: &str, page_uri: &str) -> LinkAction {
     let scheme = uri.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
     match scheme.as_deref() {
         Some("file") => {
-            let Some(path) = gtk::gio::File::for_uri(without_frag).path() else {
+            let Some(path) = Url::parse(without_frag).ok().and_then(|u| u.to_file_path().ok()) else {
                 return LinkAction::Ignore;
             };
             if is_markdown(&path) {
@@ -57,9 +57,34 @@ pub fn classify(uri: &str, page_uri: &str) -> LinkAction {
 }
 
 fn percent_decode(s: &str) -> String {
-    gtk::glib::Uri::unescape_string(s, None::<&str>)
-        .map(|g| g.to_string())
-        .unwrap_or_else(|| s.to_string())
+    percent_encoding::percent_decode_str(s).decode_utf8_lossy().into_owned()
+}
+
+/// `file://` URL of a directory, with the trailing slash that makes relative
+/// links resolve inside it.
+pub fn dir_url(dir: &Path) -> Option<Url> {
+    Url::from_directory_path(dir).ok()
+}
+
+/// Classify a link as written in the document (`href` may be relative),
+/// for a document living in `doc_dir` (`None` for an unsaved document).
+pub fn classify_href(href: &str, doc_dir: Option<&Path>) -> LinkAction {
+    let base = doc_dir.and_then(dir_url);
+    if let Some(frag) = href.strip_prefix('#') {
+        return match &base {
+            Some(_) => LinkAction::Allow,
+            None if frag.is_empty() => LinkAction::Ignore,
+            None => LinkAction::Allow,
+        };
+    }
+    let resolved = match &base {
+        Some(b) => b.join(href).map(|u| u.to_string()),
+        None => Url::parse(href).map(|u| u.to_string()),
+    };
+    match resolved {
+        Ok(uri) => classify(&uri, base.as_ref().map(Url::as_str).unwrap_or("about:blank")),
+        Err(_) => LinkAction::Ignore,
+    }
 }
 
 #[cfg(test)]
@@ -95,6 +120,22 @@ mod tests {
             classify("file:///home/u/docs/diagram.png", PAGE),
             LinkAction::OpenFile("/home/u/docs/diagram.png".into())
         );
+    }
+
+    #[test]
+    fn relative_hrefs_resolve_against_the_document() {
+        let dir = Path::new("/home/u/docs");
+        assert_eq!(
+            classify_href("sub/other.md#part-2", Some(dir)),
+            LinkAction::OpenMarkdown { path: "/home/u/docs/sub/other.md".into(), fragment: Some("part-2".into()) }
+        );
+        assert_eq!(classify_href("../pic%20a.png", Some(dir)), LinkAction::OpenFile("/home/u/pic a.png".into()));
+        assert_eq!(classify_href("#setup", Some(dir)), LinkAction::Allow);
+        assert_eq!(
+            classify_href("https://example.com", Some(dir)),
+            LinkAction::External("https://example.com/".into())
+        );
+        assert_eq!(classify_href("other.md", None), LinkAction::Ignore, "unsaved: nowhere to resolve against");
     }
 
     #[test]

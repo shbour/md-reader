@@ -10,9 +10,11 @@ use gtk::{gdk, gio, glib};
 use sourceview5::prelude::*;
 use webkit6::prelude::*;
 
-use crate::links::{self, LinkAction};
-use crate::render::{self, Heading};
-use crate::{assets, export, state};
+use mdreader_core::links::{self, LinkAction};
+use mdreader_core::render::{self, Heading};
+use mdreader_core::{assets, export};
+
+use crate::state;
 
 const APP_NAME: &str = "Markdown Reader";
 const RENDER_DELAY: Duration = Duration::from_millis(120);
@@ -108,6 +110,9 @@ pub fn new_document(app: &adw::Application) {
 pub fn all() -> Vec<Rc<Win>> {
     WINDOWS.with_borrow(|ws| ws.clone())
 }
+
+/// An action's handler, given the window it belongs to.
+type Handler = Box<dyn Fn(&Rc<Win>)>;
 
 impl Win {
     pub fn new(app: &adw::Application) -> Rc<Self> {
@@ -399,7 +404,7 @@ impl Win {
 
     fn setup_actions(self: &Rc<Self>) {
         let group = &self.window;
-        let add = |name: &str, f: Box<dyn Fn(&Rc<Win>)>| {
+        let add = |name: &str, f: Handler| {
             let a = gio::SimpleAction::new(name, None);
             let w = Rc::downgrade(self);
             a.connect_activate(move |_, _| {
@@ -483,10 +488,10 @@ impl Win {
             let a = gio::SimpleAction::new("debug-toc", Some(glib::VariantTy::INT32));
             let w = Rc::downgrade(self);
             a.connect_activate(move |_, v| {
-                if let (Some(w), Some(i)) = (w.upgrade(), v.and_then(|v| v.get::<i32>())) {
-                    if let Some(row) = w.toc_list.row_at_index(i) {
-                        row.activate();
-                    }
+                if let (Some(w), Some(i)) = (w.upgrade(), v.and_then(|v| v.get::<i32>()))
+                    && let Some(row) = w.toc_list.row_at_index(i)
+                {
+                    row.activate();
                 }
             });
             group.add_action(&a);
@@ -539,11 +544,11 @@ impl Win {
             let a = gio::SimpleAction::new("debug-editor-line", Some(glib::VariantTy::INT32));
             let w = Rc::downgrade(self);
             a.connect_activate(move |_, v| {
-                if let (Some(w), Some(n)) = (w.upgrade(), v.and_then(|v| v.get::<i32>())) {
-                    if let Some(iter) = w.buffer.iter_at_line(n - 1) {
-                        let (y, _) = w.view.line_yrange(&iter);
-                        w.editor_scroll.vadjustment().set_value(y as f64);
-                    }
+                if let (Some(w), Some(n)) = (w.upgrade(), v.and_then(|v| v.get::<i32>()))
+                    && let Some(iter) = w.buffer.iter_at_line(n - 1)
+                {
+                    let (y, _) = w.view.line_yrange(&iter);
+                    w.editor_scroll.vadjustment().set_value(y as f64);
                 }
             });
             group.add_action(&a);
@@ -579,10 +584,10 @@ impl Win {
     fn setup_signals(self: &Rc<Self>, prev_btn: &gtk::Button, next_btn: &gtk::Button) {
         let w = Rc::downgrade(self);
         self.buffer.connect_changed(move |_| {
-            if let Some(w) = w.upgrade() {
-                if !w.loading.get() {
-                    w.schedule_render();
-                }
+            if let Some(w) = w.upgrade()
+                && !w.loading.get()
+            {
+                w.schedule_render();
             }
         });
         let w = Rc::downgrade(self);
@@ -676,11 +681,11 @@ impl Win {
             let Some(w) = w.upgrade() else { return };
             let Some(h) = w.toc.borrow().get(row.index() as usize).cloned() else { return };
             w.scroll_preview_to(&h.anchor);
-            if w.editing.get() {
-                if let Some(mut it) = w.buffer.iter_at_line(h.line.saturating_sub(1) as i32) {
-                    w.buffer.place_cursor(&it);
-                    w.view.scroll_to_iter(&mut it, 0.0, true, 0.0, 0.1);
-                }
+            if w.editing.get()
+                && let Some(mut it) = w.buffer.iter_at_line(h.line.saturating_sub(1) as i32)
+            {
+                w.buffer.place_cursor(&it);
+                w.view.scroll_to_iter(&mut it, 0.0, true, 0.0, 0.1);
             }
             if w.split.is_collapsed() {
                 w.split.set_show_sidebar(false);
@@ -757,31 +762,31 @@ impl Win {
         });
         let w = Rc::downgrade(self);
         self.search_ctx.connect_occurrences_count_notify(move |_| {
-            if let Some(w) = w.upgrade() {
-                if w.editing.get() {
-                    w.update_editor_match_label();
-                }
+            if let Some(w) = w.upgrade()
+                && w.editing.get()
+            {
+                w.update_editor_match_label();
             }
         });
         let find = self.web.find_controller().expect("webview has a find controller");
         let w = Rc::downgrade(self);
         find.connect_counted_matches(move |_, n| {
-            if let Some(w) = w.upgrade() {
-                if !w.editing.get() {
-                    w.match_label.set_label(&match n {
-                        1 => "1 match".to_string(),
-                        n => format!("{n} matches"),
-                    });
-                }
+            if let Some(w) = w.upgrade()
+                && !w.editing.get()
+            {
+                w.match_label.set_label(&match n {
+                    1 => "1 match".to_string(),
+                    n => format!("{n} matches"),
+                });
             }
         });
         let w = Rc::downgrade(self);
         find.connect_failed_to_find_text(move |_| {
-            if let Some(w) = w.upgrade() {
-                if !w.editing.get() {
-                    w.match_label.set_label("No matches");
-                    w.search_entry.add_css_class("error");
-                }
+            if let Some(w) = w.upgrade()
+                && !w.editing.get()
+            {
+                w.match_label.set_label("No matches");
+                w.search_entry.add_css_class("error");
             }
         });
 
@@ -789,10 +794,10 @@ impl Win {
         let w = Rc::downgrade(self);
         self.banner.connect_button_clicked(move |b| {
             b.set_revealed(false);
-            if let Some(w) = w.upgrade() {
-                if let Some(f) = w.file.borrow().clone() {
-                    w.load_file(&f, false);
-                }
+            if let Some(w) = w.upgrade()
+                && let Some(f) = w.file.borrow().clone()
+            {
+                w.load_file(&f, false);
             }
         });
 
@@ -1202,6 +1207,11 @@ impl Win {
                 return false;
             }
         };
+        // A dropped image, PDF or archive would open as a page of noise.
+        if bytes[..bytes.len().min(8192)].contains(&0) {
+            self.toast(&format!("Could not open {}: it is not a text file", display_name(file)));
+            return false;
+        }
         let text = match String::from_utf8(bytes.to_vec()) {
             Ok(t) => t,
             Err(_) => {
@@ -1209,12 +1219,11 @@ impl Win {
                 String::from_utf8_lossy(&bytes).into_owned()
             }
         };
-        if record {
-            if let Some(p) = self.path() {
-                if Some(&p) != file.path().as_ref() {
-                    self.history.borrow_mut().push(p);
-                }
-            }
+        if record
+            && let Some(p) = self.path()
+            && Some(&p) != file.path().as_ref()
+        {
+            self.history.borrow_mut().push(p);
         }
         self.back_btn.set_visible(!self.history.borrow().is_empty());
         let same_file = self.path() == file.path();
@@ -1429,6 +1438,8 @@ impl Win {
         dialog.set_close_response("cancel");
         let w = self.clone();
         glib::spawn_future_local(async move {
+            // Not a match guard: saving is the arm's work, not its condition.
+            #[allow(clippy::collapsible_match)]
             match dialog.choose_future(Some(&w.window)).await.as_str() {
                 "discard" => {
                     w.force_close.set(true);

@@ -1,0 +1,12 @@
+# Markdown Reader: let WebKitGTK sandbox its web processes with bubblewrap.
+# Ubuntu 23.10+ lets unprivileged programs create user namespaces only when an
+# AppArmor profile allows it; without this the app aborts at start with
+# "bwrap: setting up uid map: Permission denied". Grants nothing else.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile mdreader /usr/bin/mdreader flags=(unconfined) {
+  userns,
+
+  include if exists <local/mdreader>
+}
