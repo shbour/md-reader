@@ -1,6 +1,6 @@
 //! Building a standalone HTML file from the rendered preview.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -45,27 +45,68 @@ pub fn inline_images(html: &str, doc_dir: &Path) -> String {
     out
 }
 
+/// Where the `src="…"` value sits in an `<img …>` tag.
+fn src_range(tag: &str) -> Option<std::ops::Range<usize>> {
+    let start = tag.find(" src=\"")? + " src=\"".len();
+    let len = tag[start..].find('"')?;
+    Some(start..start + len)
+}
+
+/// The `src` of every `<img>` in `html` (sanitized HTML, so `&amp;` is the
+/// only entity a URL carries).
+pub fn image_sources(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find("<img") {
+        let Some(len) = rest[start..].find('>') else { break };
+        let tag = &rest[start..start + len + 1];
+        if let Some(r) = src_range(tag) {
+            out.push(tag[r].replace("&amp;", "&"));
+        }
+        rest = &rest[start + len + 1..];
+    }
+    out
+}
+
+/// The local file an image `src` refers to, for a document in `doc_dir`:
+/// relative paths (`..` resolved) and file: URLs; None for http, data: etc.
+pub fn local_image_path(src: &str, doc_dir: &Path) -> Option<PathBuf> {
+    if src.starts_with("file:") {
+        return Url::parse(src).ok()?.to_file_path().ok();
+    }
+    if src.contains(':') || src.starts_with("//") || src.is_empty() {
+        return None;
+    }
+    let no_query = src.split(['?', '#']).next().unwrap_or(src);
+    let rel = percent_decode_str(no_query).decode_utf8().ok()?.into_owned();
+    let mut path = PathBuf::new();
+    for c in doc_dir.join(rel).components() {
+        match c {
+            Component::ParentDir => {
+                path.pop();
+            }
+            Component::CurDir => {}
+            c => path.push(c),
+        }
+    }
+    Some(path)
+}
+
+/// Whether `path` names an image type the preview and export can show.
+pub fn is_image(path: &Path) -> bool {
+    mime_for(path).is_some()
+}
+
 fn rewrite_img_tag(tag: &str, doc_dir: &Path) -> String {
-    let Some(i) = tag.find(" src=\"") else { return tag.to_string() };
-    let v_start = i + " src=\"".len();
-    let Some(v_len) = tag[v_start..].find('"') else { return tag.to_string() };
-    let raw = &tag[v_start..v_start + v_len];
-    match data_uri_for(&raw.replace("&amp;", "&"), doc_dir) {
-        Some(uri) => format!("{}{}{}", &tag[..v_start], uri, &tag[v_start + v_len..]),
+    let Some(r) = src_range(tag) else { return tag.to_string() };
+    match data_uri_for(&tag[r.clone()].replace("&amp;", "&"), doc_dir) {
+        Some(uri) => format!("{}{}{}", &tag[..r.start], uri, &tag[r.end..]),
         None => tag.to_string(),
     }
 }
 
 fn data_uri_for(src: &str, doc_dir: &Path) -> Option<String> {
-    let path = if src.starts_with("file:") {
-        Url::parse(src).ok()?.to_file_path().ok()?
-    } else if src.contains(':') || src.starts_with("//") || src.is_empty() {
-        return None; // http(s), data:, etc. stay as they are
-    } else {
-        let no_query = src.split(['?', '#']).next().unwrap_or(src);
-        let rel = percent_decode_str(no_query).decode_utf8().ok()?.into_owned();
-        doc_dir.join(rel)
-    };
+    let path = local_image_path(src, doc_dir)?;
     let meta = std::fs::metadata(&path).ok()?;
     if !meta.is_file() || meta.len() > MAX_IMAGE_BYTES {
         return None;
@@ -114,6 +155,26 @@ mod tests {
         assert!(out.contains(r#"src="https://example.com/r.png""#), "{out}");
         assert!(out.contains(r#"<img src="missing.png">"#), "{out}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn image_paths_resolve_like_the_page() {
+        let dir = Path::new("/home/u/proj/docs");
+        let html = r#"<img src="../logo.png" alt="a"><p><img alt="b" src="./img/x%20y.png?v=2"></p><img src="https://e.com/r.png"><img src="data:image/png;base64,AA"><img src="a.png?x=1&amp;y=2">"#;
+        let srcs = image_sources(html);
+        assert_eq!(srcs, ["../logo.png", "./img/x%20y.png?v=2", "https://e.com/r.png", "data:image/png;base64,AA", "a.png?x=1&y=2"]);
+        let paths: Vec<_> = srcs.iter().map(|s| local_image_path(s, dir)).collect();
+        assert_eq!(
+            paths,
+            [
+                Some(PathBuf::from("/home/u/proj/logo.png")),
+                Some(PathBuf::from("/home/u/proj/docs/img/x y.png")),
+                None,
+                None,
+                Some(PathBuf::from("/home/u/proj/docs/a.png")),
+            ]
+        );
+        assert!(is_image(Path::new("a.PNG")) && !is_image(Path::new("notes.md")));
     }
 
     #[test]

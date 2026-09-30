@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -59,6 +60,10 @@ enum LinkReply {
 #[derive(Default)]
 struct WatchState(Mutex<Option<notify::RecommendedWatcher>>);
 
+/// Images outside a document's folder that the preview may show.
+#[derive(Default)]
+struct AllowedImages(Mutex<HashSet<PathBuf>>);
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -71,6 +76,10 @@ fn path_string(p: &Path) -> String {
 fn read_document(app: AppHandle, path: String) -> Result<Document, String> {
     let p = PathBuf::from(&path);
     let bytes = std::fs::read(&p).map_err(err)?;
+    // A dropped image, PDF or archive would open as a tab of noise.
+    if bytes[..bytes.len().min(8192)].contains(&0) {
+        return Err("it is not a text file".into());
+    }
     let (text, lossy) = match String::from_utf8(bytes) {
         Ok(t) => (t, false),
         Err(e) => (String::from_utf8_lossy(e.as_bytes()).into_owned(), true),
@@ -90,7 +99,15 @@ fn read_document(app: AppHandle, path: String) -> Result<Document, String> {
 /// Write via a temporary file and rename, so a crash never leaves half a file.
 #[tauri::command]
 fn write_document(app: AppHandle, path: String, text: String) -> Result<(), String> {
-    let p = PathBuf::from(&path);
+    let link = PathBuf::from(&path);
+    if let Some(dir) = link.parent() {
+        app.asset_protocol_scope().allow_directory(dir, true).map_err(err)?;
+    }
+    // Through a symlink to its file: renaming over the link would replace it.
+    let p = match std::fs::symlink_metadata(&link) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(&link).map_err(err)?,
+        _ => link,
+    };
     let name = p.file_name().ok_or("not a file path")?.to_string_lossy().into_owned();
     let tmp = p.with_file_name(format!(".{name}.mdreader-tmp"));
     std::fs::write(&tmp, text).map_err(err)?;
@@ -101,15 +118,15 @@ fn write_document(app: AppHandle, path: String, text: String) -> Result<(), Stri
         let _ = std::fs::remove_file(&tmp);
         err(e)
     })?;
-    if let Some(dir) = p.parent() {
-        app.asset_protocol_scope().allow_directory(dir, true).map_err(err)?;
-    }
     Ok(())
 }
 
 #[tauri::command]
-fn render_markdown(text: String) -> Rendered {
+fn render_markdown(app: AppHandle, allowed: State<AllowedImages>, text: String, dir: Option<String>) -> Rendered {
     let r = render::render(&text);
+    if let Some(dir) = dir.filter(|d| !d.is_empty()) {
+        allow_images(&app, &allowed, &r.html, Path::new(&dir));
+    }
     Rendered {
         html: r.html,
         toc: r
@@ -119,6 +136,21 @@ fn render_markdown(text: String) -> Rendered {
             .collect(),
         has_math: r.has_math,
         has_mermaid: r.has_mermaid,
+    }
+}
+
+/// Let the preview show the local images a document uses wherever they are
+/// (`../images/a.png`); the asset scope otherwise covers only the folders of
+/// open documents. Only image files, each allowed once.
+fn allow_images(app: &AppHandle, allowed: &AllowedImages, html: &str, dir: &Path) {
+    let Ok(mut done) = allowed.0.lock() else { return };
+    for src in export::image_sources(html) {
+        if let Some(path) = export::local_image_path(&src, dir).filter(|p| export::is_image(p))
+            && !done.contains(&path)
+            && app.asset_protocol_scope().allow_file(&path).is_ok()
+        {
+            done.insert(path);
+        }
     }
 }
 
@@ -191,11 +223,6 @@ fn export_html(dest: String, title: String, body: String, has_math: bool, doc_di
     std::fs::write(dest, page).map_err(err)
 }
 
-/// Watch `path` (or stop watching, for `None`). Emits "file-changed" with the
-/// path. The folder is watched, not the file, so editors that save by
-/// writing a new file and renaming it over the old one are noticed too.
-const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
-
 /// An image for the preview, by its asset URL. WebKitGTK only shows custom
 /// scheme URLs to pages that may fetch them, and the sandboxed preview (origin
 /// null) may fetch nothing, so on Linux it asks for the bytes instead. Serves
@@ -208,16 +235,15 @@ fn read_image(app: AppHandle, url: String) -> Result<tauri::ipc::Response, Strin
         return Err("not allowed".into());
     }
     let path = path.canonicalize().map_err(err)?;
-    let is_image = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
-    if !is_image || !app.asset_protocol_scope().is_allowed(&path) {
+    if !export::is_image(&path) || !app.asset_protocol_scope().is_allowed(&path) {
         return Err("not allowed".into());
     }
     std::fs::read(&path).map(tauri::ipc::Response::new).map_err(err)
 }
 
+/// Watch `paths`, replacing the previous set. Emits "file-changed" with the
+/// path. The folders are watched, not the files, so editors that save by
+/// writing a new file and renaming it over the old one are noticed too.
 #[tauri::command]
 fn watch_files(app: AppHandle, state: State<WatchState>, paths: Vec<String>) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(err)?;
@@ -388,6 +414,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(WatchState::default())
+        .manage(AllowedImages::default())
         .setup(|_app| {
             // After the window-state plugin has restored the saved geometry.
             if let Some(window) = _app.get_webview_window("main") {

@@ -214,7 +214,7 @@ async function renderNow() {
   clearTimeout(renderTimer);
   const seq = ++renderSeq;
   const src = text();
-  const r = await invoke("render_markdown", { text: src });
+  const r = await invoke("render_markdown", { text: src, dir: state.dir });
   if (seq !== renderSeq) return; // a newer render is on its way
   setToc(r.toc);
   state.hasMath = r.hasMath;
@@ -575,8 +575,15 @@ async function saveAs() {
   let path = await dialog.save({ defaultPath: state.path || "Untitled.md", filters: FILTERS });
   if (!path) return false;
   if (!/\.[^\\/.]+$/.test(path)) path += ".md";
+  // Saving over a document open in another tab: that tab would be stale.
+  const other = tabs.find((t) => t !== state && samePath(t.path, path));
+  if (other && tabDirty(other)) {
+    toast(`${other.name} is open in another tab with unsaved changes`);
+    return false;
+  }
   const moved = path !== state.path;
   if (!(await writeTo(path))) return false;
+  if (other) tabs.splice(tabs.indexOf(other), 1);
   if (moved) {
     state.path = path;
     state.name = path.split(/[\\/]/).pop();
