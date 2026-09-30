@@ -130,6 +130,7 @@ const pending = new Map();
 let libs = { katex: false, mermaid: false };
 
 function call(cmd, ...args) {
+  if (!frameReady) return Promise.reject(new Error("no preview yet"));
   return frameReady.then(
     () =>
       new Promise((resolve, reject) => {
@@ -278,11 +279,11 @@ async function confirmDiscard() {
   return answer === "No" || answer === "Don't Save";
 }
 
-async function readDoc(path) {
+async function readDoc(path, { quiet = false } = {}) {
   try {
     return await invoke("read_document", { path });
   } catch (e) {
-    toast(`Could not open ${path}: ${e}`);
+    if (!quiet) toast(`Could not open ${path}: ${e}`);
     return null;
   }
 }
@@ -324,22 +325,87 @@ const samePath = (a, b) => !!a && !!b && (IS_WINDOWS ? a.toLowerCase() === b.toL
 // the last. The others wait in the background: drawing a document can take a
 // while (diagrams, maths), so only the one on screen is drawn.
 async function openFiles(paths) {
-  const blank = !state.path && !dirty() ? state : null; // e.g. the start-up window
-  let target = null;
+  const blank = blankTab();
+  const found = await tabsFor(paths);
+  return found.length ? showOpened(found.at(-1), blank) : false;
+}
+
+// An empty, untouched tab (e.g. the start-up window) that opening files replaces.
+const blankTab = () => (!state.path && !dirty() ? state : null);
+
+// The tabs for `paths`, in order: already open ones, else new background tabs.
+// Files that cannot be read are left out.
+async function tabsFor(paths, { quiet = false } = {}) {
+  const found = [];
   for (const path of paths) {
     let tab = tabs.find((t) => samePath(t.path, path));
     if (!tab) {
-      const doc = await readDoc(path);
+      const doc = await readDoc(path, { quiet });
       if (!doc) continue;
       tab = tabs.find((t) => samePath(t.path, doc.path)) || addTab(doc);
     }
-    target = tab;
+    if (!found.includes(tab)) found.push(tab);
   }
-  if (!target) return false;
+  return found;
+}
+
+async function showOpened(target, blank) {
   syncWatches();
   await switchTo(target);
   if (blank && blank !== target) tabs.splice(tabs.indexOf(blank), 1);
   renderTabs(); // new tabs, even when the one shown has not changed
+  return true;
+}
+
+// ---------------------------------------------------------------- session
+// The open documents (not unsaved new ones) are kept as they change and
+// reopened at the next start, with the one on screen, edit mode and reading
+// position. Unsaved changes are not kept: closing asks about them.
+
+const SESSION_KEY = "mdreader-session";
+let restoring = false;
+
+function saveSession() {
+  if (restoring) return;
+  const open = tabs.filter((t) => t.path);
+  const session = {
+    tabs: open.map((t) => ({ path: t.path, editing: t.editing, previewY: Math.round(t.previewY) || 0 })),
+    active: state.path,
+  };
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch (_) {}
+}
+
+// Reopen last time's documents, then `file` (from the command line) if any,
+// which is shown. False when there was nothing to open.
+async function restoreSession(file) {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+  } catch (_) {}
+  const entries = (Array.isArray(saved?.tabs) ? saved.tabs : []).filter((e) => typeof e?.path === "string");
+  const blank = blankTab();
+  restoring = true;
+  try {
+    const found = await tabsFor(entries.map((e) => e.path), { quiet: true });
+    for (const t of found) {
+      const e = entries.find((e) => samePath(e.path, t.path));
+      t.editing = !!e?.editing;
+      t.previewY = Number(e?.previewY) || 0;
+    }
+    let target = found.find((t) => samePath(t.path, saved?.active)) || found[0];
+    if (file) target = (await tabsFor([file]))[0] || target;
+    const missing = entries.length - found.length;
+    if (missing > 0) {
+      toast(missing === 1 ? "1 document from last time no longer exists" : `${missing} documents from last time no longer exist`);
+    }
+    if (!target) return false;
+    await showOpened(target, blank);
+  } finally {
+    restoring = false;
+  }
+  saveSession();
   return true;
 }
 
@@ -441,6 +507,7 @@ async function closeTab(tab = state) {
 }
 
 function renderTabs() {
+  saveSession();
   el.tabs.hidden = tabs.length < 2;
   el.tabs.replaceChildren(
     ...tabs.map((t, i) => {
@@ -615,6 +682,7 @@ async function followLink(href) {
 
 function setEditing(on) {
   state.editing = on;
+  saveSession();
   applyEditing();
   updateTitle();
   renderNow();
@@ -995,19 +1063,33 @@ document.addEventListener("contextmenu", (e) => {
 
 // ------------------------------------------------- window integration
 
-// Ask about each tab with unsaved changes, showing it first.
+// Ask about each tab with unsaved changes, showing it first; then keep the
+// session and close.
 appWindow.onCloseRequested((event) => {
-  if (!tabs.some(tabDirty)) return;
   event.preventDefault();
+  if (!tabs.some(tabDirty)) {
+    closeWindow();
+    return;
+  }
   queued(async () => {
     for (const t of [...tabs]) {
       if (!tabDirty(t)) continue;
       await switchTo(t);
       if (!(await confirmDiscard())) return;
     }
-    await appWindow.destroy();
+    await closeWindow();
   });
 });
+
+async function closeWindow() {
+  // The reading position on screen, unless the preview is slow to answer.
+  if (state.path && !state.editing) {
+    const late = new Promise((r) => setTimeout(r, 300, state.previewY));
+    state.previewY = await Promise.race([call("getScrollY"), late]).catch(() => state.previewY);
+  }
+  saveSession();
+  await appWindow.destroy();
+}
 
 webview.onDragDropEvent((e) => {
   if (e.payload.type !== "drop") return;
@@ -1022,7 +1104,7 @@ listen("open-file", (e) => queued(() => openInTab(e.payload)));
 // For tests driving a debug build (see devdrive in main.rs).
 window.mdrApp = {
   view, call, openPath, setEditing, refreshSearch, stepSearch, openSearch, followLink, goBack,
-  writeTo, exportHtmlTo, dirty, tabs, openInTab, openFiles, switchTo, closeTab, queued,
+  writeTo, exportHtmlTo, dirty, tabs, openInTab, openFiles, switchTo, closeTab, queued, closeWindow,
   get state() {
     return state;
   },
@@ -1034,9 +1116,11 @@ window.mdrApp = {
   document.documentElement.style.setProperty("--editor-font-size", `${14 * prefs.zoom}px`);
   applySplit();
   updateTitle();
-  const file = await invoke("startup_file");
-  if (!file || !(await openPath(file))) {
-    await loadShell();
-    await renderNow();
-  }
+  await queued(async () => {
+    const file = await invoke("startup_file");
+    if (!(await restoreSession(file))) {
+      await loadShell();
+      await renderNow();
+    }
+  });
 })();
