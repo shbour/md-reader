@@ -1,7 +1,23 @@
 # Markdown Reader
 
-A GNOME desktop app for reading, editing and previewing Markdown files, written
-in Rust with GTK 4, libadwaita and WebKitGTK.
+A desktop app for reading, editing and previewing Markdown files, written in
+Rust: a GNOME app for Linux (GTK 4, libadwaita, WebKitGTK) and a Windows app
+(Tauri, WebView2) on the same rendering core.
+
+## Download
+
+Packages are on the [Releases page](https://github.com/shbour/md-reader/releases).
+
+| System | File | Install |
+|---|---|---|
+| Windows 10 / 11 | `markdown-reader_<version>_x64-setup.exe` | Run it; it installs for your user, no admin needed |
+| Fedora 40+ | `markdown-reader-<version>-1.x86_64.rpm` | `sudo dnf install ./markdown-reader-*.rpm` |
+| RHEL / AlmaLinux / Rocky 10 | the same `.rpm` | `sudo dnf install epel-release` first (EPEL has WebKitGTK 6.0) |
+| Ubuntu 24.04+, Debian 13+ (Mint 22, Pop!_OS 24.04…) | `markdown-reader_<version>_amd64.deb` | `sudo apt install ./markdown-reader_*.deb` |
+
+The Windows installer isn't code-signed yet, so SmartScreen may warn the first
+time: choose **More info** → **Run anyway**. On Ubuntu the package also installs
+a small AppArmor profile that WebKitGTK's sandbox needs there.
 
 ## Features
 
@@ -48,7 +64,7 @@ Then, with a Rust toolchain (1.85+, e.g. from [rustup](https://rustup.rs)):
 cargo build --release
 ```
 
-## Installing
+## Installing from source
 
 ```sh
 ./install.sh               # build, install to ~/.local, set as the default .md app
@@ -80,7 +96,8 @@ Run it with `mdreader [FILE…]` or `mdreader --new`.
 | `gtk/` | The Linux app (GTK 4, libadwaita, WebKitGTK) |
 | `tauri/` | The Windows app (Tauri, WebView2, CodeMirror), see [tauri/README.md](tauri/README.md) |
 | `vendor/` | Bundled KaTeX and Mermaid |
-| `data/` | Icon and desktop entry |
+| `data/` | Icon, desktop entry and AppStream metadata |
+| `packaging/` | `build-rpm.sh` (Fedora/RHEL), `build-deb.sh` (Debian/Ubuntu, run it on the oldest release to support), the RPM spec and the AppArmor profile |
 
 ## Bundled libraries
 
