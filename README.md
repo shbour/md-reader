@@ -34,6 +34,9 @@ a small AppArmor profile that WebKitGTK's sandbox needs there.
 - **Search** (Ctrl+F): in edit mode it steps through matches in the editor and
   highlights them in the preview; Escape leaves the match selected.
 - **Contents sidebar** (F9) built from the headings.
+- **Open a folder** (Ctrl+Shift+O, or drop one on the window): its Markdown
+  files are listed in the sidebar, so one click reads each in turn. The
+  folder is reopened at the next start.
 - **Print** (Ctrl+P), **Export as PDF**, **Export as HTML** (a single
   self-contained file with images embedded).
 - Follows links between Markdown files (with Back, Alt+Left), reloads when the
@@ -72,17 +75,18 @@ cargo build --release
 ./install.sh --uninstall
 ```
 
-Run it with `mdreader [FILE…]` or `mdreader --new`.
+Run it with `mdreader [FILE…]`, `mdreader FOLDER` or `mdreader --new`.
 
 ## Keyboard shortcuts
 
 | Keys | Action |
 |---|---|
 | Ctrl+O / Ctrl+N | Open / new document |
+| Ctrl+Shift+O | Open a folder |
 | Ctrl+S / Ctrl+Shift+S | Save / save as |
 | Ctrl+E | Toggle edit mode |
 | Ctrl+F, Ctrl+G, Ctrl+Shift+G | Find, next, previous |
-| F9 | Contents sidebar |
+| F9 | Sidebar (contents, and files of an open folder) |
 | Alt+Left | Back |
 | Ctrl+P | Print |
 | Ctrl+Plus / Ctrl+Minus / Ctrl+0 | Zoom |

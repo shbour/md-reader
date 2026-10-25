@@ -14,11 +14,13 @@ pub struct State {
     pub sidebar: Option<bool>,
     /// Editor share of the edit/preview split, 0..1.
     pub split: f64,
+    /// The folder last shown in the Files sidebar.
+    pub folder: Option<PathBuf>,
 }
 
 impl Default for State {
     fn default() -> Self {
-        State { width: 1100, height: 780, maximized: false, zoom: 1.0, sidebar: None, split: 0.5 }
+        State { width: 1100, height: 780, maximized: false, zoom: 1.0, sidebar: None, split: 0.5, folder: None }
     }
 }
 
@@ -51,6 +53,7 @@ fn load_from(path: &std::path::Path) -> State {
         zoom: kf.double(GROUP, "zoom").ok().filter(|z| (0.3..=4.0).contains(z)).unwrap_or(d.zoom),
         sidebar: kf.boolean(GROUP, "sidebar").ok(),
         split: kf.double(GROUP, "split").ok().filter(|s| (0.1..=0.9).contains(s)).unwrap_or(d.split),
+        folder: kf.string(GROUP, "folder").ok().map(|s| PathBuf::from(s.as_str())).filter(|p| p.is_absolute()),
     }
 }
 
@@ -64,6 +67,9 @@ fn save_to(path: &std::path::Path, s: &State) -> Result<(), glib::Error> {
         kf.set_boolean(GROUP, "sidebar", b);
     }
     kf.set_double(GROUP, "split", s.split);
+    if let Some(f) = s.folder.as_ref().and_then(|f| f.to_str()) {
+        kf.set_string(GROUP, "folder", f);
+    }
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -80,7 +86,7 @@ mod tests {
         let p = dir.join("state.ini");
         assert_eq!(load_from(&p), State::default(), "missing file gives defaults");
 
-        let s = State { width: 1400, height: 900, maximized: true, zoom: 1.25, sidebar: Some(false), split: 0.4 };
+        let s = State { width: 1400, height: 900, maximized: true, zoom: 1.25, sidebar: Some(false), split: 0.4, folder: Some("/home/u/My Notes".into()) };
         save_to(&p, &s).unwrap();
         assert_eq!(load_from(&p), s);
 

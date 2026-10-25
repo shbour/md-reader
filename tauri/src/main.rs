@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use mdreader_core::links::{self, LinkAction};
-use mdreader_core::{assets, export, render};
+use mdreader_core::{assets, export, folder, render};
 use notify::{EventKind, RecursiveMode, Watcher};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::Serialize;
@@ -57,6 +57,22 @@ enum LinkReply {
     Missing { path: String },
 }
 
+#[derive(Serialize)]
+struct FolderEntry {
+    path: String,
+    name: String,
+    depth: usize,
+    dir: bool,
+}
+
+#[derive(Serialize)]
+struct FolderListing {
+    path: String,
+    name: String,
+    entries: Vec<FolderEntry>,
+    truncated: bool,
+}
+
 #[derive(Default)]
 struct WatchState(Mutex<Option<notify::RecommendedWatcher>>);
 
@@ -94,6 +110,33 @@ fn read_document(app: AppHandle, path: String) -> Result<Document, String> {
         text,
         lossy,
     })
+}
+
+/// The Markdown files under a folder, for the Files sidebar. Async so a big
+/// tree is scanned off the main thread.
+#[tauri::command]
+async fn list_folder(path: String) -> Result<FolderListing, String> {
+    let root = PathBuf::from(&path);
+    let listing = tauri::async_runtime::spawn_blocking(move || folder::scan(&root))
+        .await
+        .map_err(err)?
+        .map_err(err)?;
+    let p = Path::new(&path);
+    Ok(FolderListing {
+        name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone()),
+        path,
+        entries: listing
+            .entries
+            .into_iter()
+            .map(|e| FolderEntry { path: path_string(&e.path), name: e.name, depth: e.depth, dir: e.is_dir })
+            .collect(),
+        truncated: listing.truncated,
+    })
+}
+
+#[tauri::command]
+fn is_folder(path: String) -> bool {
+    Path::new(&path).is_dir()
 }
 
 /// Write via a temporary file and rename, so a crash never leaves half a file.
@@ -279,11 +322,20 @@ fn watch_files(app: AppHandle, state: State<WatchState>, paths: Vec<String>) -> 
 
 /// The first file named on the command line (e.g. from a file association).
 fn file_arg(args: &[String], cwd: &Path) -> Option<String> {
+    path_arg(args, cwd, Path::is_file)
+}
+
+/// The first folder named on the command line, for the Files sidebar.
+fn folder_arg(args: &[String], cwd: &Path) -> Option<String> {
+    path_arg(args, cwd, Path::is_dir)
+}
+
+fn path_arg(args: &[String], cwd: &Path, want: fn(&Path) -> bool) -> Option<String> {
     args.iter()
         .skip(1)
         .filter(|a| !a.starts_with('-'))
         .map(|a| cwd.join(a))
-        .find(|p| p.is_file())
+        .find(|p| want(p))
         .map(|p| path_string(&p.canonicalize().unwrap_or(p)))
         .map(strip_verbatim)
 }
@@ -297,6 +349,12 @@ fn strip_verbatim(p: String) -> String {
 fn startup_file() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     file_arg(&args, &std::env::current_dir().unwrap_or_default())
+}
+
+#[tauri::command]
+fn startup_folder() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    folder_arg(&args, &std::env::current_dir().unwrap_or_default())
 }
 
 #[tauri::command]
@@ -409,6 +467,9 @@ fn main() {
             if let Some(path) = file_arg(&args, Path::new(&cwd)) {
                 let _ = app.emit("open-file", path);
             }
+            if let Some(path) = folder_arg(&args, Path::new(&cwd)) {
+                let _ = app.emit("open-folder", path);
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -434,6 +495,9 @@ fn main() {
             watch_files,
             read_image,
             startup_file,
+            startup_folder,
+            list_folder,
+            is_folder,
             app_version,
             debug_log,
         ])
@@ -476,6 +540,9 @@ mod tests {
         let found = file_arg(&args, &dir).expect("a.md is found");
         assert!(found.ends_with("a.md"));
         assert_eq!(file_arg(&args[..3], &dir), None);
+        let with_dir = vec!["app".to_string(), "a.md".into(), dir.to_string_lossy().into_owned()];
+        assert!(folder_arg(&with_dir, &dir).is_some_and(|f| Path::new(&f).is_dir()));
+        assert_eq!(folder_arg(&args, &dir), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -44,7 +44,14 @@ fn main() -> glib::ExitCode {
     app.connect_activate(|app| match app.active_window() {
         // `--new` already opened a window; don't add an empty second one.
         Some(w) => w.present(),
-        None => window::Win::new(app).window.present(),
+        None => {
+            let win = window::Win::new(app);
+            // A plain start reopens the folder that was open last time.
+            if let Some(dir) = state::load().folder.filter(|d| d.is_dir()) {
+                win.set_folder(Some(dir));
+            }
+            win.window.present();
+        }
     });
     app.connect_open(|app, files, _hint| {
         for f in files {
@@ -94,6 +101,7 @@ fn setup_app_actions(app: &adw::Application) {
         ("app.new", &["<Ctrl>n"][..]),
         ("app.quit", &["<Ctrl>q"]),
         ("win.open", &["<Ctrl>o"]),
+        ("win.open-folder", &["<Ctrl><Shift>o"]),
         ("win.save", &["<Ctrl>s"]),
         ("win.save-as", &["<Ctrl><Shift>s"]),
         ("win.print", &["<Ctrl>p"]),

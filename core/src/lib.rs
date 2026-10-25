@@ -4,5 +4,6 @@
 
 pub mod assets;
 pub mod export;
+pub mod folder;
 pub mod links;
 pub mod render;

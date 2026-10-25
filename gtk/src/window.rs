@@ -1,6 +1,7 @@
 //! One reader/editor window per document.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -12,15 +13,15 @@ use webkit6::prelude::*;
 
 use mdreader_core::links::{self, LinkAction};
 use mdreader_core::render::{self, Heading};
-use mdreader_core::{assets, export};
+use mdreader_core::{assets, export, folder};
 
 use crate::state;
 
 const APP_NAME: &str = "Markdown Reader";
 const RENDER_DELAY: Duration = Duration::from_millis(120);
 const DISK_CHECK_DELAY: Duration = Duration::from_millis(250);
-const EMPTY_STATE: &str = "<div class=\"empty-state\"><p>Open a Markdown file with <b>Ctrl+O</b>, \
-    drop one here, or start a new one with <b>Ctrl+N</b>.</p></div>";
+const EMPTY_STATE: &str = "<div class=\"empty-state\"><p>Open a Markdown file with <b>Ctrl+O</b> \
+    or a folder of them with <b>Ctrl+Shift+O</b>, drop one here, or start a new one with <b>Ctrl+N</b>.</p></div>";
 
 thread_local! {
     static WINDOWS: RefCell<Vec<Rc<Win>>> = const { RefCell::new(Vec::new()) };
@@ -35,6 +36,17 @@ pub struct Win {
     split: adw::OverlaySplitView,
     toc_list: gtk::ListBox,
     toc: RefCell<Vec<Heading>>,
+    sidebar_stack: adw::ViewStack,
+    sidebar_header: adw::HeaderBar,
+    sidebar_switcher: adw::ViewSwitcher,
+    contents_title: adw::WindowTitle,
+    files_list: gtk::ListBox,
+    folder_label: gtk::Label,
+    /// The folder shown in the Files sidebar, if one was opened.
+    folder: RefCell<Option<PathBuf>>,
+    /// Its rows, in the order of `files_list`; the image is a folder's arrow.
+    files: RefCell<Vec<(folder::Entry, gtk::ListBoxRow, Option<gtk::Image>)>>,
+    collapsed: RefCell<HashSet<PathBuf>>,
     /// The user's last explicit choice to show/hide the contents sidebar.
     sidebar_pref: Cell<Option<bool>>,
     paned: gtk::Paned,
@@ -88,6 +100,10 @@ pub struct Win {
 /// An empty, untouched window is reused.
 pub fn open(app: &adw::Application, file: &gio::File) {
     let path = file.path();
+    if let Some(dir) = path.as_ref().filter(|p| p.is_dir()) {
+        open_folder(app, dir);
+        return;
+    }
     let existing = WINDOWS.with_borrow(|ws| {
         ws.iter()
             .find(|w| path.is_some() && w.path() == path)
@@ -98,6 +114,40 @@ pub fn open(app: &adw::Application, file: &gio::File) {
     if win.path() != path {
         win.load_file(file, true);
     }
+    win.window.present();
+}
+
+/// Show `dir` in the Files sidebar of a window: one already showing it, an
+/// empty one, or a new one.
+pub fn open_folder(app: &adw::Application, dir: &Path) {
+    let existing = WINDOWS.with_borrow(|ws| {
+        ws.iter()
+            .find(|w| w.folder.borrow().as_deref() == Some(dir))
+            .or_else(|| ws.iter().find(|w| w.is_blank() && w.folder.borrow().is_none()))
+            .cloned()
+    });
+    let win = existing.unwrap_or_else(|| Win::new(app));
+    if win.folder.borrow().as_deref() != Some(dir) {
+        win.set_folder(Some(dir.to_path_buf()));
+    }
+    win.window.present();
+}
+
+/// Like `open`, but a new window shows `dir` in its Files sidebar. Set before
+/// the window is shown: revealing the sidebar of a window that has just been
+/// presented but not yet sized makes GTK allocate negative widths.
+fn open_with_folder(app: &adw::Application, file: &gio::File, dir: Option<PathBuf>) {
+    let path = file.path();
+    let existing = WINDOWS.with_borrow(|ws| ws.iter().find(|w| path.is_some() && w.path() == path).cloned());
+    if let Some(w) = existing {
+        w.window.present();
+        return;
+    }
+    let win = Win::new(app);
+    if dir.is_some() {
+        win.set_folder(dir);
+    }
+    win.load_file(file, true); // on failure, the window shows why
     win.window.present();
 }
 
@@ -222,13 +272,61 @@ impl Win {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
-        let toc_page = adw::ToolbarView::new();
-        let toc_header = adw::HeaderBar::builder()
-            .show_title(true)
-            .title_widget(&adw::WindowTitle::new("Contents", ""))
+        // Files: the Markdown files of an opened folder, one click to read each.
+        let files_list = gtk::ListBox::builder()
+            .css_classes(["navigation-sidebar"])
+            .selection_mode(gtk::SelectionMode::Single)
             .build();
-        toc_page.add_top_bar(&toc_header);
-        toc_page.set_content(Some(&toc_scroll));
+        let files_scroll = gtk::ScrolledWindow::builder()
+            .child(&files_list)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .build();
+        let folder_label = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .ellipsize(gtk::pango::EllipsizeMode::Middle)
+            .css_classes(["heading"])
+            .margin_start(6)
+            .build();
+        let refresh_btn = gtk::Button::builder()
+            .icon_name("view-refresh-symbolic")
+            .tooltip_text("Refresh")
+            .action_name("win.refresh-folder")
+            .css_classes(["flat"])
+            .build();
+        let close_folder_btn = gtk::Button::builder()
+            .icon_name("window-close-symbolic")
+            .tooltip_text("Close Folder")
+            .action_name("win.close-folder")
+            .css_classes(["flat"])
+            .build();
+        let folder_bar = gtk::Box::builder().spacing(2).margin_start(6).margin_end(6).margin_top(2).build();
+        folder_bar.append(&folder_label);
+        folder_bar.append(&refresh_btn);
+        folder_bar.append(&close_folder_btn);
+        let files_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        files_box.append(&folder_bar);
+        files_box.append(&files_scroll);
+
+        let sidebar_stack = adw::ViewStack::new();
+        sidebar_stack.add_titled_with_icon(&files_box, Some("files"), "Files", "folder-symbolic");
+        // Not every icon theme has the Adwaita name (Breeze, for one).
+        let list_icon = ["view-list-bullet-symbolic", "format-list-unordered-symbolic"]
+            .into_iter()
+            .find(|n| gdk::Display::default().is_some_and(|d| gtk::IconTheme::for_display(&d).has_icon(n)))
+            .unwrap_or("view-list-bullet-symbolic");
+        sidebar_stack.add_titled_with_icon(&toc_scroll, Some("contents"), "Contents", list_icon);
+        sidebar_stack.set_visible_child_name("contents");
+        let sidebar_switcher = adw::ViewSwitcher::builder()
+            .stack(&sidebar_stack)
+            .policy(adw::ViewSwitcherPolicy::Wide)
+            .build();
+        let contents_title = adw::WindowTitle::new("Contents", "");
+        let toc_page = adw::ToolbarView::new();
+        let sidebar_header = adw::HeaderBar::builder().show_title(true).title_widget(&contents_title).build();
+        toc_page.add_top_bar(&sidebar_header);
+        toc_page.set_content(Some(&sidebar_stack));
 
         // ---- content column ----
         let back_btn = gtk::Button::builder()
@@ -247,6 +345,11 @@ impl Win {
             .tooltip_text("Open a File (Ctrl+O)")
             .action_name("win.open")
             .build();
+        let open_folder_btn = gtk::Button::builder()
+            .icon_name("folder-open-symbolic")
+            .tooltip_text("Open a Folder (Ctrl+Shift+O)")
+            .action_name("win.open-folder")
+            .build();
         let edit_btn = gtk::ToggleButton::builder()
             .icon_name("document-edit-symbolic")
             .tooltip_text("Edit (Ctrl+E)")
@@ -263,6 +366,7 @@ impl Win {
         let sec1 = gio::Menu::new();
         sec1.append(Some("New Document"), Some("app.new"));
         sec1.append(Some("Open…"), Some("win.open"));
+        sec1.append(Some("Open Folder…"), Some("win.open-folder"));
         sec1.append(Some("Save As…"), Some("win.save-as"));
         menu.append_section(None, &sec1);
         let sec_out = gio::Menu::new();
@@ -291,6 +395,7 @@ impl Win {
         header.pack_start(&toc_btn);
         header.pack_start(&back_btn);
         header.pack_start(&open_btn);
+        header.pack_start(&open_folder_btn);
         header.pack_end(&menu_btn);
         header.pack_end(&edit_btn);
         header.pack_end(&save_btn);
@@ -338,6 +443,15 @@ impl Win {
             split,
             toc_list,
             toc: RefCell::new(Vec::new()),
+            sidebar_stack,
+            sidebar_header,
+            sidebar_switcher,
+            contents_title,
+            files_list,
+            folder_label,
+            folder: RefCell::new(None),
+            files: RefCell::new(Vec::new()),
+            collapsed: RefCell::new(HashSet::new()),
             sidebar_pref: Cell::new(saved.sidebar),
             paned,
             editor_scroll,
@@ -415,6 +529,9 @@ impl Win {
             group.add_action(&a);
         };
         add("open", Box::new(|w| w.choose_file()));
+        add("open-folder", Box::new(|w| w.choose_folder()));
+        add("refresh-folder", Box::new(|w| w.refresh_folder()));
+        add("close-folder", Box::new(|w| w.set_folder(None)));
         add("save", Box::new(|w| {
             let w = w.clone();
             glib::spawn_future_local(async move {
@@ -549,6 +666,31 @@ impl Win {
                 {
                     let (y, _) = w.view.line_yrange(&iter);
                     w.editor_scroll.vadjustment().set_value(y as f64);
+                }
+            });
+            group.add_action(&a);
+            let a = gio::SimpleAction::new("debug-folder", Some(glib::VariantTy::STRING));
+            let w = Rc::downgrade(self);
+            a.connect_activate(move |_, v| {
+                if let (Some(w), Some(p)) = (w.upgrade(), v.and_then(|v| v.get::<String>())) {
+                    w.set_folder((!p.is_empty()).then(|| PathBuf::from(p)));
+                }
+            });
+            group.add_action(&a);
+            let a = gio::SimpleAction::new("debug-folder-row", Some(glib::VariantTy::INT32));
+            let w = Rc::downgrade(self);
+            a.connect_activate(move |_, v| {
+                if let (Some(w), Some(i)) = (w.upgrade(), v.and_then(|v| v.get::<i32>()))
+                    && let Some(row) = w.files_list.row_at_index(i)
+                {
+                    row.activate();
+                    let rows: Vec<String> = w
+                        .files
+                        .borrow()
+                        .iter()
+                        .map(|(e, r, _)| format!("{}{}{}", if r.is_visible() { "" } else { "(hidden)" }, if r.is_selected() { "*" } else { "" }, e.name))
+                        .collect();
+                    eprintln!("mdreader: folder rows = {rows:?}, open = {:?}", w.path());
                 }
             });
             group.add_action(&a);
@@ -692,6 +834,34 @@ impl Win {
             }
         });
         let w = Rc::downgrade(self);
+        self.files_list.connect_row_activated(move |_, row| {
+            let Some(w) = w.upgrade() else { return };
+            let Some(entry) = w.files.borrow().get(row.index() as usize).map(|f| f.0.clone()) else { return };
+            if entry.is_dir {
+                {
+                    let mut c = w.collapsed.borrow_mut();
+                    if !c.remove(&entry.path) {
+                        c.insert(entry.path);
+                    }
+                }
+                w.update_file_rows();
+                w.highlight_current_file();
+                return;
+            }
+            let file = gio::File::for_path(&entry.path);
+            if w.buffer.is_modified() && w.path().as_ref() != Some(&entry.path) {
+                // Unsaved changes here: read it in another window, which
+                // gets the folder too, to carry on from there.
+                open_with_folder(&w.app, &file, w.folder.borrow().clone());
+            } else {
+                w.open_from_here(&file, None);
+            }
+            w.highlight_current_file();
+            if w.split.is_collapsed() {
+                w.split.set_show_sidebar(false);
+            }
+        });
+        let w = Rc::downgrade(self);
         self.split.connect_show_sidebar_notify(move |s| {
             if let Some(w) = w.upgrade() {
                 w.action_state("toc", s.shows_sidebar());
@@ -809,7 +979,10 @@ impl Win {
                 return false;
             };
             for f in list.files() {
-                w.open_from_here(&f, None);
+                match f.path().filter(|p| p.is_dir()) {
+                    Some(dir) => w.set_folder(Some(dir)),
+                    None => w.open_from_here(&f, None),
+                }
             }
             true
         });
@@ -867,6 +1040,7 @@ impl Win {
         s.zoom = self.web.zoom_level();
         s.sidebar = self.sidebar_pref.get().or(s.sidebar);
         s.split = self.split_ratio.get();
+        s.folder = self.folder.borrow().clone();
         state::save(&s);
     }
 
@@ -1166,7 +1340,8 @@ impl Win {
         self.toc.replace(toc);
         // Follow the user's last choice; without one, offer the outline for
         // documents with several headings.
-        if first_toc && !self.split.is_collapsed() {
+        // With a folder open the sidebar holds its files, so it stays as it is.
+        if first_toc && !self.split.is_collapsed() && self.folder.borrow().is_none() {
             let n = self.toc.borrow().len();
             let show = match self.sidebar_pref.get() {
                 Some(pref) => pref && n > 0,
@@ -1238,6 +1413,7 @@ impl Win {
             self.page_ready.set(false);
         }
         self.render_now();
+        self.highlight_current_file();
         if let Some(p) = file.path() {
             gtk::RecentManager::default().add_item(&gio::File::for_path(p).uri());
         }
@@ -1360,6 +1536,191 @@ impl Win {
         });
     }
 
+    fn choose_folder(self: &Rc<Self>) {
+        let dialog = gtk::FileDialog::builder().title("Open Folder").modal(true).build();
+        let start = self.folder.borrow().clone().or_else(|| self.path().and_then(|p| p.parent().map(Path::to_path_buf)));
+        if let Some(dir) = start {
+            dialog.set_initial_folder(Some(&gio::File::for_path(dir)));
+        }
+        let w = self.clone();
+        dialog.select_folder(Some(&self.window), None::<&gio::Cancellable>, move |res| {
+            if let Ok(dir) = res
+                && let Some(p) = dir.path()
+            {
+                w.set_folder(Some(p));
+            }
+        });
+    }
+
+    // ---------------------------------------------------------- folder
+
+    /// Show `dir`'s Markdown files in the sidebar, or with None go back to
+    /// the contents only.
+    pub fn set_folder(self: &Rc<Self>, dir: Option<PathBuf>) {
+        let Some(dir) = dir else {
+            self.folder.replace(None);
+            self.files.borrow_mut().clear();
+            while let Some(row) = self.files_list.first_child() {
+                self.files_list.remove(&row);
+            }
+            self.sidebar_header.set_title_widget(Some(&self.contents_title));
+            self.sidebar_stack.set_visible_child_name("contents");
+            let n = self.toc.borrow().len();
+            self.split.set_show_sidebar(match self.sidebar_pref.get() {
+                Some(pref) => pref && n > 0,
+                None => n >= 3,
+            });
+            return;
+        };
+        self.folder.replace(Some(dir.clone()));
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| tilde(&dir));
+        self.folder_label.set_label(&name);
+        self.folder_label.set_tooltip_text(Some(&tilde(&dir)));
+        self.sidebar_header.set_title_widget(Some(&self.sidebar_switcher));
+        self.sidebar_stack.set_visible_child_name("files");
+        self.files.borrow_mut().clear();
+        while let Some(row) = self.files_list.first_child() {
+            self.files_list.remove(&row);
+        }
+        self.split.set_show_sidebar(true);
+        let w = self.clone();
+        glib::spawn_future_local(async move {
+            let Some(listing) = w.scan_folder(&dir).await else {
+                // It could not be read (unless another folder replaced it meanwhile).
+                if w.folder.borrow().as_deref() == Some(dir.as_path()) {
+                    w.set_folder(None);
+                }
+                return;
+            };
+            // Small trees open fully; in big ones only the way to the open document.
+            let collapsed = if listing.entries.len() > 60 {
+                listing.entries.iter().filter(|e| e.is_dir).map(|e| e.path.clone()).collect()
+            } else {
+                HashSet::new()
+            };
+            w.collapsed.replace(collapsed);
+            let empty = listing.entries.is_empty();
+            w.fill_files(listing);
+            if empty {
+                w.toast(&format!("No Markdown files in {}", tilde(&dir)));
+            }
+        });
+    }
+
+    /// Scan `dir` off the main thread: a big tree takes a moment. None if it
+    /// failed (with a toast) or another folder was opened meanwhile.
+    async fn scan_folder(&self, dir: &Path) -> Option<folder::Listing> {
+        let d = dir.to_path_buf();
+        let res = gio::spawn_blocking(move || folder::scan(&d)).await;
+        if self.folder.borrow().as_deref() != Some(dir) {
+            return None;
+        }
+        match res {
+            Ok(Ok(l)) => Some(l),
+            Ok(Err(e)) => {
+                self.toast(&format!("Could not open {}: {e}", tilde(dir)));
+                None
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Scan the folder again, keeping which subfolders are open.
+    fn refresh_folder(self: &Rc<Self>) {
+        let Some(dir) = self.folder.borrow().clone() else { return };
+        let w = self.clone();
+        glib::spawn_future_local(async move {
+            if let Some(l) = w.scan_folder(&dir).await {
+                w.fill_files(l);
+            }
+        });
+    }
+
+    fn fill_files(&self, listing: folder::Listing) {
+        while let Some(row) = self.files_list.first_child() {
+            self.files_list.remove(&row);
+        }
+        let mut rows = Vec::with_capacity(listing.entries.len());
+        for e in listing.entries {
+            let line = gtk::Box::builder().spacing(6).margin_start(14 * e.depth as i32).build();
+            let arrow = e.is_dir.then(|| gtk::Image::from_icon_name("pan-down-symbolic"));
+            match &arrow {
+                Some(a) => line.append(a),
+                // Keeps file names lined up with folder names.
+                None => line.append(&gtk::Box::builder().width_request(16).build()),
+            }
+            let icon = if e.is_dir { "folder-symbolic" } else { "text-x-generic-symbolic" };
+            line.append(&gtk::Image::from_icon_name(icon));
+            let label = gtk::Label::builder()
+                .label(&e.name)
+                .xalign(0.0)
+                .hexpand(true)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .tooltip_text(e.path.to_string_lossy().as_ref())
+                .build();
+            line.append(&label);
+            let row = gtk::ListBoxRow::builder().child(&line).build();
+            self.files_list.append(&row);
+            rows.push((e, row, arrow));
+        }
+        if listing.truncated {
+            let note = gtk::Label::builder()
+                .label("Some files are not shown: the folder is too large")
+                .wrap(true)
+                .xalign(0.0)
+                .css_classes(["dim-label", "caption"])
+                .margin_top(6)
+                .margin_start(6)
+                .build();
+            let row = gtk::ListBoxRow::builder().child(&note).activatable(false).selectable(false).build();
+            self.files_list.append(&row);
+        }
+        self.files.replace(rows);
+        self.update_file_rows();
+        self.highlight_current_file();
+    }
+
+    /// Hide the rows inside collapsed folders and point each folder's arrow.
+    fn update_file_rows(&self) {
+        let collapsed = self.collapsed.borrow();
+        // Folders on the way down to the current row, by depth.
+        let mut open_path: Vec<bool> = Vec::new();
+        for (e, row, arrow) in self.files.borrow().iter() {
+            open_path.truncate(e.depth);
+            let visible = open_path.iter().all(|&open| open);
+            row.set_visible(visible);
+            if let Some(a) = arrow {
+                let open = !collapsed.contains(&e.path);
+                a.set_icon_name(Some(if open { "pan-down-symbolic" } else { "pan-end-symbolic" }));
+                open_path.push(open);
+            }
+        }
+    }
+
+    /// Select the open document in the Files list, opening the folders it is in.
+    fn highlight_current_file(&self) {
+        let Some(path) = self.path() else {
+            self.files_list.unselect_all();
+            return;
+        };
+        let target = self.files.borrow().iter().find(|(e, ..)| !e.is_dir && e.path == path).map(|(_, r, _)| r.clone());
+        let Some(row) = target else {
+            self.files_list.unselect_all();
+            return;
+        };
+        let hidden_by: Vec<PathBuf> = path.ancestors().skip(1).map(Path::to_path_buf).collect();
+        let changed = {
+            let mut c = self.collapsed.borrow_mut();
+            let before = c.len();
+            c.retain(|d| !hidden_by.contains(d));
+            c.len() != before
+        };
+        if changed {
+            self.update_file_rows();
+        }
+        self.files_list.select_row(Some(&row));
+    }
+
     async fn save(self: &Rc<Self>) -> bool {
         let Some(file) = self.file.borrow().clone() else {
             return self.save_as().await;
@@ -1393,6 +1754,10 @@ impl Win {
         if moved {
             self.page_ready.set(false);
             self.render_now();
+            // It may be a new file in the open folder.
+            if self.folder.borrow().is_some() {
+                self.refresh_folder();
+            }
         }
         true
     }

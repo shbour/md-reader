@@ -14,7 +14,9 @@ const el = {
   edit: $("btn-edit"), menuBtn: $("btn-menu"), menu: $("menu"),
   title: $("doc-title"), dir: $("doc-dir"),
   searchbar: $("searchbar"), search: $("search"), count: $("match-count"),
-  banner: $("banner"), toc: $("toc"), tocList: $("toc-list"),
+  banner: $("banner"), sidebar: $("sidebar"), tocList: $("toc-list"), tocTitle: $("toc-title"),
+  sideTabs: $("side-tabs"), filesPanel: $("files-panel"), tocPanel: $("toc-panel"),
+  folderName: $("folder-name"), filesList: $("files-list"), filesNote: $("files-note"),
   editorPane: $("editor-pane"), editor: $("editor"), splitter: $("splitter"),
   work: $("work"), preview: $("preview"), toast: $("toast"), tabs: $("tabs"),
 };
@@ -23,8 +25,8 @@ const APP = "Markdown Reader";
 const MD_EXT = ["md", "markdown", "mdown", "mkd", "mkdn", "mdx"];
 const FILTERS = [{ name: "Markdown", extensions: MD_EXT }, { name: "All files", extensions: ["*"] }];
 const EMPTY =
-  '<div class="empty-state"><p>Open a Markdown file with <b>Ctrl+O</b>, drop one here, ' +
-  "or start a new one with <b>Ctrl+N</b>.</p></div>";
+  '<div class="empty-state"><p>Open a Markdown file with <b>Ctrl+O</b> or a folder of them with ' +
+  "<b>Ctrl+Shift+O</b>, drop one here, or start a new one with <b>Ctrl+N</b>.</p></div>";
 
 // ------------------------------------------------------------ preferences
 // Window size and position are kept by the window-state plugin; these are
@@ -371,6 +373,7 @@ function saveSession() {
   const session = {
     tabs: open.map((t) => ({ path: t.path, editing: t.editing, previewY: Math.round(t.previewY) || 0 })),
     active: state.path,
+    folder: folder?.path ?? null,
   };
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
@@ -530,6 +533,7 @@ function renderTabs() {
     })
   );
   el.tabs.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  markCurrentFile();
 }
 
 const tabAt = (e) => tabs[e.target.closest(".tab")?.dataset.index];
@@ -592,6 +596,7 @@ async function saveAs() {
     updateTitle();
     renderTabs();
     await reloadPreview(); // relative images now resolve against the new folder
+    if (folder && isInside(path, folder.path)) await refreshFolder(); // a new file in the folder
   }
   return true;
 }
@@ -804,21 +809,201 @@ function setToc(toc) {
 }
 
 function showSidebar(on) {
-  el.toc.hidden = !on;
+  el.sidebar.hidden = !on;
   el.tocBtn.setAttribute("aria-pressed", String(on));
 }
 
-// The user's last choice; without one, show it for documents with a few headings.
+// The user's last choice; without one, show it for documents with a few
+// headings. With a folder open it holds the folder's files, so it stays.
 function applySidebarPref() {
+  if (folder) return;
   const n = state.toc.length;
   showSidebar(prefs.sidebar === null ? n >= 3 : prefs.sidebar && n > 0);
 }
 
 function toggleSidebar() {
-  prefs.sidebar = el.toc.hidden;
+  prefs.sidebar = el.sidebar.hidden;
   savePrefs();
   showSidebar(prefs.sidebar);
 }
+
+// ----------------------------------------------------------------- folder
+// An opened folder's Markdown files in the sidebar: one click reads each.
+
+let folder = null; // { path, name, entries: [{ path, name, depth, dir }], truncated, collapsed: Set }
+let folderSeq = 0;
+
+function showPanel(name) {
+  const files = name === "files" && !!folder;
+  el.filesPanel.hidden = !files;
+  el.tocPanel.hidden = files;
+  for (const b of el.sideTabs.querySelectorAll("button")) b.setAttribute("aria-selected", String(b.dataset.panel === (files ? "files" : "contents")));
+}
+
+async function chooseFolder() {
+  const start = folder?.path || state.dir || undefined;
+  const picked = await dialog.open({ directory: true, multiple: false, defaultPath: start });
+  if (picked) await openFolder(picked);
+}
+
+// Show `path` in the sidebar. `keepOpen` keeps the folders that were open
+// (a refresh); otherwise a small tree opens fully, a big one only the way to
+// the open document.
+async function openFolder(path, { quiet = false, keepOpen = false } = {}) {
+  const seq = ++folderSeq;
+  let listing;
+  try {
+    listing = await invoke("list_folder", { path });
+  } catch (e) {
+    if (!quiet) toast(`Could not open ${path}: ${e}`);
+    return false;
+  }
+  if (seq !== folderSeq) return false; // another folder was opened meanwhile
+  const collapsed =
+    keepOpen && folder ? folder.collapsed
+    : new Set(listing.entries.length > 60 ? listing.entries.filter((e) => e.dir).map((e) => e.path) : []);
+  folder = { ...listing, collapsed };
+  el.sideTabs.hidden = false;
+  el.tocTitle.hidden = true;
+  el.folderName.textContent = folder.name;
+  el.folderName.title = folder.path;
+  if (!keepOpen) {
+    showPanel("files");
+    showSidebar(true);
+  }
+  renderFiles();
+  saveSession();
+  if (!listing.entries.length && !quiet) toast(`No Markdown files in ${path}`);
+  return true;
+}
+
+function closeFolder() {
+  folderSeq++;
+  folder = null;
+  el.sideTabs.hidden = true;
+  el.tocTitle.hidden = false;
+  el.filesList.replaceChildren();
+  showPanel("contents");
+  applySidebarPref();
+  saveSession();
+}
+
+const refreshFolder = () => folder && openFolder(folder.path, { keepOpen: true });
+
+const ARROW = '<svg class="arrow" viewBox="0 0 20 20"><path d="M6 8l4 4 4-4"/></svg>';
+const FOLDER_ICON = '<svg viewBox="0 0 20 20"><path d="M3 6.5V15a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-6L8.5 5H4a1 1 0 0 0-1 1.5z"/></svg>';
+const FILE_ICON = '<svg viewBox="0 0 20 20"><path d="M5 3h7l3 3v11H5zM8 9h5M8 12h5M8 15h3"/></svg>';
+
+function renderFiles() {
+  if (!folder) return;
+  el.filesList.replaceChildren(
+    ...folder.entries.map((e, i) => {
+      const li = document.createElement("li");
+      li.setAttribute("role", "none");
+      const b = document.createElement("button");
+      b.setAttribute("role", "treeitem");
+      b.dataset.index = i;
+      b.title = e.path;
+      b.style.paddingLeft = `${6 + 14 * e.depth}px`;
+      b.innerHTML = (e.dir ? ARROW + FOLDER_ICON : '<span class="spacer"></span>' + FILE_ICON) + '<span class="name"></span>';
+      b.querySelector(".name").textContent = e.name;
+      li.append(b);
+      return li;
+    })
+  );
+  el.filesNote.hidden = !folder.truncated;
+  el.filesNote.textContent = "Some files are not shown: the folder is too large.";
+  markCurrentFile();
+}
+
+// Hide what is inside collapsed folders; highlight the document on screen,
+// opening the folders it is in.
+function markCurrentFile() {
+  if (!folder) return;
+  const current = state.path && folder.entries.find((e) => !e.dir && samePath(e.path, state.path));
+  if (current) {
+    for (const e of folder.entries) {
+      if (e.dir && folder.collapsed.has(e.path) && isInside(current.path, e.path)) folder.collapsed.delete(e.path);
+    }
+  }
+  const open = []; // by depth: is each folder on the way down open?
+  const buttons = el.filesList.querySelectorAll("button");
+  folder.entries.forEach((e, i) => {
+    open.length = e.depth;
+    const b = buttons[i];
+    b.parentElement.hidden = !open.every(Boolean);
+    if (e.dir) {
+      const isOpen = !folder.collapsed.has(e.path);
+      b.setAttribute("aria-expanded", String(isOpen));
+      open.push(isOpen);
+    }
+    const here = e === current;
+    b.classList.toggle("current", here);
+    if (here) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  });
+  el.filesList.querySelector(".current")?.scrollIntoView({ block: "nearest" });
+}
+
+const isInside = (file, dir) => {
+  const f = IS_WINDOWS ? file.toLowerCase() : file;
+  const d = (IS_WINDOWS ? dir.toLowerCase() : dir).replace(/[\\/]+$/, ""); // a drive root ("C:\") too
+  return f.startsWith(d) && (f[d.length] === "/" || f[d.length] === "\\");
+};
+
+// Read a file from the folder: in the tab already showing it, in this tab
+// (Back returns), or with `newTab` (middle click) in a tab of its own.
+async function openFromFolder(path, { newTab = false } = {}) {
+  const open = tabs.find((t) => samePath(t.path, path));
+  if (open) return switchTo(open);
+  if (newTab || blankTab()) return openFiles([path]);
+  return openPath(path);
+}
+
+el.filesList.addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  const entry = b && folder?.entries[b.dataset.index];
+  if (!entry) return;
+  if (entry.dir) {
+    if (!folder.collapsed.delete(entry.path)) folder.collapsed.add(entry.path);
+    markCurrentFile();
+  } else {
+    queued(() => openFromFolder(entry.path));
+  }
+});
+el.filesList.addEventListener("auxclick", (e) => {
+  const b = e.target.closest("button");
+  const entry = b && folder?.entries[b.dataset.index];
+  if (entry && !entry.dir && e.button === 1) queued(() => openFromFolder(entry.path, { newTab: true }));
+});
+el.filesList.addEventListener("mousedown", (e) => {
+  if (e.button === 1) e.preventDefault(); // no autoscroll on middle click
+});
+// Up and down move between the visible rows; left and right close and open folders.
+el.filesList.addEventListener("keydown", (e) => {
+  const b = e.target.closest("button");
+  if (!b || !folder) return;
+  const entry = folder.entries[b.dataset.index];
+  const visible = [...el.filesList.querySelectorAll("li:not([hidden]) > button")];
+  const i = visible.indexOf(b);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    visible[i + (e.key === "ArrowDown" ? 1 : -1)]?.focus();
+  } else if (entry.dir && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (e.key === "ArrowLeft") folder.collapsed.add(entry.path);
+    else folder.collapsed.delete(entry.path);
+    markCurrentFile();
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+});
+el.sideTabs.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-panel]");
+  if (b) showPanel(b.dataset.panel);
+});
+$("folder-refresh").addEventListener("click", () => queued(refreshFolder));
+$("folder-close").addEventListener("click", closeFolder);
 
 // ---------------------------------------------------------------- search
 // Reading: steps through matches in the preview. Editing: steps through the
@@ -975,6 +1160,7 @@ async function about() {
 const actions = {
   new: newDocument,
   open: chooseFile,
+  "open-folder": chooseFolder,
   save,
   "save-as": saveAs,
   print: printPreview,
@@ -1015,6 +1201,7 @@ document.addEventListener("click", (e) => {
   if (!el.menu.hidden && !e.target.closest(".menu-wrap")) closeMenu();
 });
 el.open.addEventListener("click", () => run("open"));
+$("btn-open-folder").addEventListener("click", () => run("open-folder"));
 el.save.addEventListener("click", () => run("save"));
 el.edit.addEventListener("click", () => run("edit"));
 el.tocBtn.addEventListener("click", () => run("toc"));
@@ -1029,7 +1216,7 @@ function handleKey(k) {
   const key = k.key.length === 1 ? k.key.toLowerCase() : k.key;
   const map = ctrl
     ? {
-        o: "open", n: "new", s: shift ? "save-as" : "save", e: "edit", f: "find", p: "print",
+        o: shift ? "open-folder" : "open", n: "new", s: shift ? "save-as" : "save", e: "edit", f: "find", p: "print",
         w: "close", "=": "zoom-in", "+": "zoom-in", "-": "zoom-out", 0: "zoom-reset",
       }
     : alt
@@ -1101,19 +1288,27 @@ async function closeWindow() {
 webview.onDragDropEvent((e) => {
   if (e.payload.type !== "drop") return;
   queued(async () => {
-    for (const path of e.payload.paths) await openInTab(path);
+    for (const path of e.payload.paths) {
+      if (await invoke("is_folder", { path })) await openFolder(path);
+      else await openInTab(path);
+    }
   });
 });
 
 // A second launch (e.g. double-clicking another .md file) sends its file here.
 listen("open-file", (e) => queued(() => openInTab(e.payload)));
+listen("open-folder", (e) => queued(() => openFolder(e.payload)));
 
 // For tests driving a debug build (see devdrive in main.rs).
 window.mdrApp = {
   view, call, openPath, setEditing, refreshSearch, stepSearch, openSearch, followLink, goBack,
   writeTo, exportHtmlTo, dirty, tabs, openInTab, openFiles, switchTo, closeTab, queued, closeWindow,
+  openFolder, closeFolder, refreshFolder, openFromFolder,
   get state() {
     return state;
+  },
+  get folder() {
+    return folder;
   },
 };
 
@@ -1124,10 +1319,17 @@ window.mdrApp = {
   applySplit();
   updateTitle();
   await queued(async () => {
-    const file = await invoke("startup_file");
+    const [file, dir] = await Promise.all([invoke("startup_file"), invoke("startup_folder")]);
+    let lastFolder = null;
+    try {
+      lastFolder = JSON.parse(localStorage.getItem(SESSION_KEY) || "null")?.folder;
+    } catch (_) {}
     if (!(await restoreSession(file))) {
       await loadShell();
       await renderNow();
     }
+    // A folder named on the command line, else last time's.
+    if (dir) await openFolder(dir);
+    else if (typeof lastFolder === "string") await openFolder(lastFolder, { quiet: true });
   });
 })();

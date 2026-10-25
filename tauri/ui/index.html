@@ -10,13 +10,16 @@
 </head>
 <body>
 <header class="toolbar">
-  <button id="btn-toc" class="icon" title="Contents (F9)" aria-label="Contents" aria-pressed="false">
+  <button id="btn-toc" class="icon" title="Sidebar (F9)" aria-label="Sidebar" aria-pressed="false">
     <svg viewBox="0 0 20 20"><path d="M3 5h14M3 10h14M3 15h9"/></svg>
   </button>
   <button id="btn-back" class="icon" title="Back (Alt+Left)" aria-label="Back" hidden>
     <svg viewBox="0 0 20 20"><path d="M12 4l-6 6 6 6"/></svg>
   </button>
   <button id="btn-open" class="text" title="Open a file (Ctrl+O)">Open</button>
+  <button id="btn-open-folder" class="icon" title="Open a folder (Ctrl+Shift+O)" aria-label="Open a folder">
+    <svg viewBox="0 0 20 20"><path d="M3 6.5V15a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-6L8.5 5H4a1 1 0 0 0-1 1.5z"/></svg>
+  </button>
   <div class="title">
     <div id="doc-title">Markdown Reader</div>
     <div id="doc-dir"></div>
@@ -32,6 +35,7 @@
     <div id="menu" class="menu" role="menu" hidden>
       <button role="menuitem" data-action="new">New document<kbd>Ctrl+N</kbd></button>
       <button role="menuitem" data-action="open">Open…<kbd>Ctrl+O</kbd></button>
+      <button role="menuitem" data-action="open-folder">Open folder…<kbd>Ctrl+Shift+O</kbd></button>
       <button role="menuitem" data-action="save-as">Save as…<kbd>Ctrl+Shift+S</kbd></button>
       <button role="menuitem" data-action="close">Close<kbd>Ctrl+W</kbd></button>
       <hr>
@@ -70,9 +74,29 @@
 </div>
 
 <main>
-  <nav id="toc" aria-label="Contents" hidden>
-    <div class="toc-title">Contents</div>
-    <ul id="toc-list"></ul>
+  <nav id="sidebar" aria-label="Sidebar" hidden>
+    <!-- Shown with a folder open: its files, or the document's contents. -->
+    <div id="side-tabs" class="side-tabs" role="tablist" hidden>
+      <button role="tab" data-panel="files" aria-selected="true">Files</button>
+      <button role="tab" data-panel="contents" aria-selected="false">Contents</button>
+    </div>
+    <section id="files-panel" aria-label="Files" hidden>
+      <div class="folder-bar">
+        <span id="folder-name"></span>
+        <button id="folder-refresh" class="icon small" title="Refresh" aria-label="Refresh">
+          <svg viewBox="0 0 20 20"><path d="M15.5 8A6 6 0 1 0 16 11M16 4v4h-4"/></svg>
+        </button>
+        <button id="folder-close" class="icon small" title="Close folder" aria-label="Close folder">
+          <svg viewBox="0 0 20 20"><path d="M6 6l8 8M14 6l-8 8"/></svg>
+        </button>
+      </div>
+      <ul id="files-list" role="tree"></ul>
+      <p id="files-note" class="files-note" hidden></p>
+    </section>
+    <section id="toc-panel" aria-label="Contents">
+      <div id="toc-title" class="toc-title">Contents</div>
+      <ul id="toc-list"></ul>
+    </section>
   </nav>
   <div id="work">
     <section id="editor-pane" hidden><div id="editor"></div></section>
