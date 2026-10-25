@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "md-reader"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "futures-channel",
  "gtk4",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "mdreader-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ammonia",
  "base64 0.23.1",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "mdreader-tauri"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cairo-rs 0.18.5",
  "mdreader-core",

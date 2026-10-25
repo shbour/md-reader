@@ -18,6 +18,7 @@
       <li>Math with KaTeX and diagrams with Mermaid</li>
       <li>Side-by-side editing with scroll sync, and search</li>
       <li>Local images, links between documents, and a table of contents</li>
+      <li>Open a folder to read its Markdown files one after another</li>
       <li>Print, and export to PDF or a self-contained HTML page</li>
       <li>Follows changes made to the file by other programs</li>
     </ul>
@@ -35,6 +36,13 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-10-25">
+      <description>
+        <p>Open a folder (Ctrl+Shift+O, or drop one on the window) to list its
+        Markdown files in the sidebar and read them one click at a time. The
+        folder is reopened at the next start.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-29"/>
   </releases>
 </component>
