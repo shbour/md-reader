@@ -50,6 +50,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/io.github.mdreader.Md
 %{_metainfodir}/io.github.mdreader.MdReader.metainfo.xml
 
 %changelog
+* Wed Nov 18 2026 shbour <23043611+shbour@users.noreply.github.com> - 0.4.0-1
+- No changes to the Linux app; this release adds the Android app
+
 * Sun Oct 25 2026 shbour <23043611+shbour@users.noreply.github.com> - 0.3.0-1
 - Open a folder: its Markdown files are listed in the sidebar, one click to
   read each; the folder is reopened at the next start
