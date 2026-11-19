@@ -1,8 +1,8 @@
 # Markdown Reader
 
-A desktop app for reading, editing and previewing Markdown files, written in
-Rust: a GNOME app for Linux (GTK 4, libadwaita, WebKitGTK) and a Windows app
-(Tauri, WebView2) on the same rendering core.
+An app for reading, editing and previewing Markdown files, written in Rust: a
+GNOME app for Linux (GTK 4, libadwaita, WebKitGTK), and a Windows and Android
+app (Tauri) on the same rendering core.
 
 ## Download
 
@@ -14,6 +14,7 @@ Packages are on the [Releases page](https://github.com/shbour/md-reader/releases
 | Fedora 40+ | `markdown-reader-<version>-1.x86_64.rpm` | `sudo dnf install ./markdown-reader-*.rpm` |
 | RHEL / AlmaLinux / Rocky 10 | the same `.rpm` | `sudo dnf install epel-release` first (EPEL has WebKitGTK 6.0) |
 | Ubuntu 24.04+, Debian 13+ (Mint 22, Pop!_OS 24.04…) | `markdown-reader_<version>_amd64.deb` | `sudo apt install ./markdown-reader_*.deb` |
+| Android 11+ | `markdown-reader_<version>_arm64-v8a.apk` (nearly every phone since 2017), or `_universal.apk` if unsure; `_armeabi-v7a` and `_x86_64` for older 32-bit phones and emulators | Open it on the phone and allow installing from that app when asked |
 
 The Windows installer isn't code-signed yet, so SmartScreen may warn the first
 time: choose **More info** → **Run anyway**. On Ubuntu the package also installs
@@ -98,7 +99,7 @@ Run it with `mdreader [FILE…]`, `mdreader FOLDER` or `mdreader --new`.
 |---|---|
 | `core/` | Markdown rendering, sanitising, link handling, HTML export, and the preview page's CSS and script, shared by both front ends |
 | `gtk/` | The Linux app (GTK 4, libadwaita, WebKitGTK) |
-| `tauri/` | The Windows app (Tauri, WebView2, CodeMirror), see [tauri/README.md](tauri/README.md) |
+| `tauri/` | The Windows and Android app (Tauri, CodeMirror), see [tauri/README.md](tauri/README.md); `tauri/gen/android` is its Android project |
 | `vendor/` | Bundled KaTeX and Mermaid |
 | `data/` | Icon, desktop entry and AppStream metadata |
 | `packaging/` | `build-rpm.sh` (Fedora/RHEL), `build-deb.sh` (Debian/Ubuntu, run it on the oldest release to support), the RPM spec and the AppArmor profile |

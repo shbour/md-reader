@@ -221,3 +221,46 @@ button.icon.small svg { width: 16px; height: 16px; }
   box-shadow: var(--shadow);
   user-select: text;
 }
+
+/* ---- Android ---- */
+html:not(.android) [data-android] { display: none !important; }
+.android [data-desktop], .android .menu kbd { display: none !important; }
+.android body { font-family: system-ui, sans-serif; }
+
+/* Touch: targets a finger can hit. */
+.android button.icon { width: 40px; height: 40px; }
+.android button.icon svg { width: 20px; height: 20px; }
+.android button.text { height: 36px; }
+.android .menu { top: 44px; min-width: 240px; }
+.android .menu button { padding: 12px 14px; }
+.android #toc-list button, .android #files-list button { padding: 10px 12px; }
+.android .tab { height: 38px; }
+.android .tab-close { width: 32px; height: 32px; }
+.android #search { height: 36px; }
+
+/* A phone held upright: one pane at a time (`narrow` in app.js). */
+@media (max-width: 700px) {
+  .android .toolbar { gap: 2px; padding: 4px; }
+  .android .title { padding: 0 4px; text-align: left; }
+  .android main { position: relative; }
+  /* The sidebar covers the document, over a shade that closes it. */
+  .android #sidebar {
+    position: absolute;
+    z-index: 10;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(85vw, 320px);
+    background: var(--bg);
+    box-shadow: var(--shadow);
+  }
+  .android #work { position: relative; }
+  .android body.side-open #work::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.3); }
+  /* Editing: the editor instead of the preview. */
+  .android #editor-pane { width: 100% !important; flex: 1; min-width: 0; }
+  .android #splitter { display: none !important; }
+  .android body.editing #preview { display: none; }
+  .android #preview { min-width: 0; }
+  .android #match-count { min-width: 0; }
+  .android #search { width: auto; flex: 1; min-width: 0; }
+}

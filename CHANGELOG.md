@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Android app** (Android 11 and later), built from the Windows app's code
+  with Tauri. Read, search and edit Markdown with the same preview: tables,
+  maths, Mermaid diagrams, alerts, highlighted code, light and dark.
+- Open documents from a file manager, mail or chat app with **Open with →
+  Markdown Reader** (or **Share**), or with **Open**, which uses Android's
+  file picker. Several open documents get tabs, and they are reopened at the
+  next start along with your reading position.
+- **Allow access to all files** in the menu (asked for when you open a
+  folder): with it the app shows the pictures beside a document, follows links
+  to other documents, opens folders, and reloads a document another app
+  changes. Without it the app reads only what it is handed, and works fine for
+  documents that stand alone.
+- On a phone held upright, one pane at a time: the sidebar slides over the
+  document, and editing shows the editor in place of the preview. Back closes
+  what is open, leaves edit mode, returns to the previous document, and then
+  leaves the app.
+
+### Not on Android yet
+
+- New document, Save as, Print and Export as HTML.
+
 ## 0.3.0 — 2026-10-25
 
 ### Added

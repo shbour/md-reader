@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Markdown Reader</title>
 <link rel="stylesheet" href="app.css">
 <script src="vendor/codemirror.min.js"></script>
@@ -33,20 +34,21 @@
       <svg viewBox="0 0 20 20"><path d="M4 10h.01M10 10h.01M16 10h.01" class="dots"/></svg>
     </button>
     <div id="menu" class="menu" role="menu" hidden>
-      <button role="menuitem" data-action="new">New document<kbd>Ctrl+N</kbd></button>
+      <button role="menuitem" data-action="new" data-desktop>New document<kbd>Ctrl+N</kbd></button>
       <button role="menuitem" data-action="open">Open…<kbd>Ctrl+O</kbd></button>
       <button role="menuitem" data-action="open-folder">Open folder…<kbd>Ctrl+Shift+O</kbd></button>
-      <button role="menuitem" data-action="save-as">Save as…<kbd>Ctrl+Shift+S</kbd></button>
+      <button role="menuitem" data-action="save-as" data-desktop>Save as…<kbd>Ctrl+Shift+S</kbd></button>
       <button role="menuitem" data-action="close">Close<kbd>Ctrl+W</kbd></button>
-      <hr>
-      <button role="menuitem" data-action="print">Print or save as PDF…<kbd>Ctrl+P</kbd></button>
-      <button role="menuitem" data-action="export-html">Export as HTML…</button>
+      <hr data-desktop>
+      <button role="menuitem" data-action="print" data-desktop>Print or save as PDF…<kbd>Ctrl+P</kbd></button>
+      <button role="menuitem" data-action="export-html" data-desktop>Export as HTML…</button>
       <hr>
       <button role="menuitem" data-action="find">Find…<kbd>Ctrl+F</kbd></button>
       <button role="menuitem" data-action="zoom-in">Zoom in<kbd>Ctrl+=</kbd></button>
       <button role="menuitem" data-action="zoom-out">Zoom out<kbd>Ctrl+−</kbd></button>
       <button role="menuitem" data-action="zoom-reset">Reset zoom<kbd>Ctrl+0</kbd></button>
       <hr>
+      <button role="menuitem" data-action="all-files" data-android hidden>Allow access to all files…</button>
       <button role="menuitem" data-action="about">About Markdown Reader</button>
     </div>
   </div>

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">"Markdown Reader"</string>
+    <string name="main_activity_title">"Markdown Reader"</string>
+</resources>

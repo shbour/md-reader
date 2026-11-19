@@ -24,9 +24,25 @@ const el = {
 const APP = "Markdown Reader";
 const MD_EXT = ["md", "markdown", "mdown", "mkd", "mkdn", "mdx"];
 const FILTERS = [{ name: "Markdown", extensions: MD_EXT }, { name: "All files", extensions: ["*"] }];
-const EMPTY =
-  '<div class="empty-state"><p>Open a Markdown file with <b>Ctrl+O</b> or a folder of them with ' +
-  "<b>Ctrl+Shift+O</b>, drop one here, or start a new one with <b>Ctrl+N</b>.</p></div>";
+
+// Android: documents can be content:// URIs (from other apps and the system
+// picker) as well as paths; see src/android.rs.
+const IS_ANDROID = navigator.userAgent.includes("Android");
+document.documentElement.classList.toggle("android", IS_ANDROID);
+const isUri = (p) => typeof p === "string" && p.startsWith("content://");
+// A document the Android plugin hands over: its path when the app may read
+// it (relative images and links work), else its URI.
+const docRef = (item) => item.path || item.uri;
+// A phone held upright: one pane at a time. The sidebar covers the document,
+// and the editor replaces the preview while editing. Android only: a narrow
+// desktop window keeps the desktop layout.
+const narrow = matchMedia(IS_ANDROID ? "(max-width: 700px)" : "not all");
+
+const EMPTY = IS_ANDROID
+  ? '<div class="empty-state"><p>Tap <b>Open</b> to choose a Markdown file, or open one from your file manager ' +
+    "or another app with <b>Open with → Markdown Reader</b>.</p></div>"
+  : '<div class="empty-state"><p>Open a Markdown file with <b>Ctrl+O</b> or a folder of them with ' +
+    "<b>Ctrl+Shift+O</b>, drop one here, or start a new one with <b>Ctrl+N</b>.</p></div>";
 
 // ------------------------------------------------------------ preferences
 // Window size and position are kept by the window-state plugin; these are
@@ -234,6 +250,7 @@ async function renderNow() {
     if (want.length) await call("loadLibs", want);
     const body = !src.trim() && !state.path && !state.editing ? EMPTY : r.html;
     const drawn = call("update", body);
+    hintAllFiles(r.html);
     if (state.editing) syncPreview();
     if (!el.searchbar.hidden && el.search.value) call("highlight", el.search.value);
     await drawn;
@@ -269,6 +286,91 @@ function toast(msg) {
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => (el.toast.hidden = true), 4000);
 }
+
+// ------------------------------------------------- Android: file access
+// Without "All files access" the app reads only what it is handed: a URI,
+// with nothing beside it. With it, documents are paths again.
+
+let allFiles = !IS_ANDROID;
+let hinted = false;
+
+function updateAllFilesItem() {
+  el.menu.querySelector('[data-action="all-files"]').hidden = !IS_ANDROID || allFiles;
+}
+
+async function refreshAllFiles() {
+  if (!IS_ANDROID) return;
+  const had = allFiles;
+  allFiles = await invoke("all_files_access").catch(() => allFiles);
+  updateAllFilesItem();
+  if (allFiles && !had) await upgradeUriTabs();
+}
+
+// With access just granted, documents held by URI become their files, so
+// their pictures and links work without opening them again.
+async function upgradeUriTabs() {
+  let changed = false;
+  for (const t of tabs) {
+    if (!isUri(t.path)) continue;
+    const p = await invoke("uri_path", { uri: t.path }).catch(() => null);
+    if (!p || tabs.some((o) => samePath(o.path, p))) continue;
+    t.name = p.split("/").pop();
+    t.dir = p.slice(0, p.length - t.name.length - 1);
+    t.path = p;
+    changed = true;
+  }
+  if (!changed) return;
+  syncWatches();
+  updateTitle();
+  renderTabs();
+  if (!state.path || isUri(state.path)) return;
+  const y = state.editing ? 0 : await call("getScrollY").catch(() => 0);
+  await reloadPreview(); // pictures beside it resolve now
+  if (!state.editing) call("setScrollY", y).catch(() => {});
+}
+
+// True when the app has access to all files, asking for it (with `reason`)
+// if not.
+async function ensureAllFiles(reason) {
+  await refreshAllFiles();
+  if (allFiles) return true;
+  const go = await dialog.ask(
+    `${reason}\n\nAndroid opens the setting: turn on access for Markdown Reader, then come back.`,
+    { title: "Access to all files", kind: "info", okLabel: "Open setting", cancelLabel: "Not now" }
+  );
+  if (!go) return false;
+  allFiles = await invoke("request_all_files_access").catch(() => false);
+  updateAllFilesItem();
+  if (!allFiles) toast("Access to all files was not turned on");
+  else await upgradeUriTabs();
+  return allFiles;
+}
+
+async function allowAllFiles() {
+  const ok = await ensureAllFiles(
+    "With access to all files, Markdown Reader shows the pictures beside a document, follows links to other " +
+      "documents, opens folders, and reloads documents other apps change."
+  );
+  if (ok) toast("Done: documents show the pictures and links beside them.");
+}
+
+// A document held by URI whose pictures or links point beside it: say once
+// what would show them.
+function hintAllFiles(html) {
+  if (!IS_ANDROID || allFiles || hinted || !isUri(state.path)) return;
+  if (!/\s(?:src|href)="(?![a-z][a-z0-9+.-]*:|#|\/)/i.test(html)) return;
+  hinted = true;
+  toast("Pictures and links to files beside this document need access to all files (in the menu).");
+}
+
+// Documents other apps sent ("Open with", "Share"), each opened in a tab.
+async function takeOpened() {
+  if (!IS_ANDROID) return;
+  const items = await invoke("take_opened");
+  if (items.length) await openFiles(items.map(docRef));
+}
+// Called by the plugin when more arrive while the app runs.
+window.mdrOpened = () => queued(takeOpened);
 
 // Resolve unsaved changes before they would be lost. True means go ahead.
 async function confirmDiscard() {
@@ -380,9 +482,10 @@ function saveSession() {
   } catch (_) {}
 }
 
-// Reopen last time's documents, then `file` (from the command line) if any,
-// which is shown. False when there was nothing to open.
-async function restoreSession(file) {
+// Reopen last time's documents, then `files` (from the command line, or sent
+// by other apps), the last of which is shown. False when there was nothing
+// to open.
+async function restoreSession(files) {
   let saved = null;
   try {
     saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
@@ -398,10 +501,14 @@ async function restoreSession(file) {
       t.previewY = Number(e?.previewY) || 0;
     }
     let target = found.find((t) => samePath(t.path, saved?.active)) || found[0];
-    if (file) target = (await tabsFor([file]))[0] || target;
+    if (files.length) target = (await tabsFor(files)).at(-1) || target;
     const missing = entries.length - found.length;
     if (missing > 0) {
-      toast(missing === 1 ? "1 document from last time no longer exists" : `${missing} documents from last time no longer exist`);
+      toast(
+        missing === 1
+          ? "1 document from last time could not be reopened"
+          : `${missing} documents from last time could not be reopened`
+      );
     }
     if (!target) return false;
     await showOpened(target, blank);
@@ -415,6 +522,11 @@ async function restoreSession(file) {
 const openInTab = (path) => openFiles([path]);
 
 async function chooseFile() {
+  if (IS_ANDROID) {
+    const items = await invoke("pick_files");
+    if (items.length) await openFiles(items.map(docRef));
+    return;
+  }
   const picked = await dialog.open({ multiple: true, directory: false, filters: FILTERS });
   if (picked) await openFiles([picked].flat());
 }
@@ -492,8 +604,15 @@ function stepTab(by) {
 }
 
 // Closing the last tab closes the window, which asks about unsaved changes.
+// On Android, where the app has no window to close, it empties the tab.
 async function closeTab(tab = state) {
-  if (tabs.length === 1) return appWindow.close();
+  if (tabs.length === 1) {
+    if (!IS_ANDROID) return appWindow.close();
+    if (!(await confirmDiscard())) return;
+    tabs[0] = state = newTab();
+    syncWatches();
+    return showTab();
+  }
   if (tabDirty(tab)) {
     await switchTo(tab); // show what would be lost
     if (!(await confirmDiscard())) return;
@@ -704,6 +823,7 @@ function setEditing(on) {
 
 function applyEditing() {
   const on = state.editing;
+  document.body.classList.toggle("editing", on); // narrow: the editor replaces the preview
   el.edit.setAttribute("aria-pressed", String(on));
   el.editorPane.hidden = !on;
   el.splitter.hidden = !on;
@@ -798,6 +918,7 @@ function setToc(toc) {
     if (h.level === min) b.className = "top";
     b.addEventListener("click", () => {
       call("scrollToAnchor", h.anchor);
+      if (narrow.matches) showSidebar(false);
       if (state.editing) {
         const pos = view.state.doc.line(Math.min(h.line, view.state.doc.lines)).from;
         view.dispatch({ selection: { anchor: pos }, effects: CM.EditorView.scrollIntoView(pos, { y: "start" }) });
@@ -811,21 +932,33 @@ function setToc(toc) {
 function showSidebar(on) {
   el.sidebar.hidden = !on;
   el.tocBtn.setAttribute("aria-pressed", String(on));
+  document.body.classList.toggle("side-open", on);
 }
 
 // The user's last choice; without one, show it for documents with a few
 // headings. With a folder open it holds the folder's files, so it stays.
+// Narrow, it would cover the document, so it shows only when asked for.
 function applySidebarPref() {
   if (folder) return;
+  if (narrow.matches) return showSidebar(false);
   const n = state.toc.length;
   showSidebar(prefs.sidebar === null ? n >= 3 : prefs.sidebar && n > 0);
 }
 
 function toggleSidebar() {
-  prefs.sidebar = el.sidebar.hidden;
-  savePrefs();
-  showSidebar(prefs.sidebar);
+  const on = el.sidebar.hidden;
+  if (!narrow.matches) {
+    prefs.sidebar = on;
+    savePrefs();
+  }
+  showSidebar(on);
 }
+
+narrow.addEventListener("change", applySidebarPref);
+// Narrow, a tap beside the sidebar (on the shade over the document) closes it.
+el.work.addEventListener("click", (e) => {
+  if (narrow.matches && !el.sidebar.hidden && e.target === el.work) showSidebar(false);
+});
 
 // ----------------------------------------------------------------- folder
 // An opened folder's Markdown files in the sidebar: one click reads each.
@@ -841,6 +974,13 @@ function showPanel(name) {
 }
 
 async function chooseFolder() {
+  if (IS_ANDROID) {
+    if (!(await ensureAllFiles("To list the documents in a folder, Markdown Reader needs access to all files."))) return;
+    const item = await invoke("pick_folder");
+    if (!item) return;
+    if (!item.path) return toast("That folder is not on this device's storage");
+    return openFolder(item.path);
+  }
   const start = folder?.path || state.dir || undefined;
   const picked = await dialog.open({ directory: true, multiple: false, defaultPath: start });
   if (picked) await openFolder(picked);
@@ -968,6 +1108,7 @@ el.filesList.addEventListener("click", (e) => {
     if (!folder.collapsed.delete(entry.path)) folder.collapsed.add(entry.path);
     markCurrentFile();
   } else {
+    if (narrow.matches) showSidebar(false);
     queued(() => openFromFolder(entry.path));
   }
 });
@@ -1170,6 +1311,7 @@ const actions = {
   "zoom-out": () => setZoom(prefs.zoom / 1.1),
   "zoom-reset": () => setZoom(1),
   about,
+  "all-files": allowAllFiles,
   edit: () => setEditing(!state.editing),
   toc: toggleSidebar,
   back: goBack,
@@ -1295,6 +1437,40 @@ webview.onDragDropEvent((e) => {
   });
 });
 
+// ---------------------------------------------------------------- Android
+
+// Where the document was read up to, for next time: Android may end the app
+// at any point once it is in the background.
+async function rememberPosition() {
+  if (state.path && !state.editing) state.previewY = await call("getScrollY").catch(() => state.previewY);
+  saveSession();
+}
+
+// Back: close what is open, leave edit mode, return to the previous document;
+// with nothing left, the app goes to the background as Android apps do.
+async function androidBack() {
+  if (!el.menu.hidden) return closeMenu();
+  if (!el.searchbar.hidden) return closeSearch();
+  if (narrow.matches && !el.sidebar.hidden) return showSidebar(false);
+  if (state.editing) return setEditing(false);
+  if (state.history.length) return goBack();
+  await rememberPosition();
+  await invoke("leave_app");
+}
+
+if (IS_ANDROID) {
+  // Registered for good: without it, Back would step the preview frame
+  // through its earlier pages.
+  window.__TAURI__.app.onBackButtonPress(() => queued(androidBack));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) queued(rememberPosition);
+    else queued(async () => {
+      await refreshAllFiles(); // it may have been changed in the system settings
+      await takeOpened();
+    });
+  });
+}
+
 // A second launch (e.g. double-clicking another .md file) sends its file here.
 listen("open-file", (e) => queued(() => openInTab(e.payload)));
 listen("open-folder", (e) => queued(() => openFolder(e.payload)));
@@ -1320,11 +1496,13 @@ window.mdrApp = {
   updateTitle();
   await queued(async () => {
     const [file, dir] = await Promise.all([invoke("startup_file"), invoke("startup_folder")]);
+    await refreshAllFiles();
+    const sent = IS_ANDROID ? (await invoke("take_opened").catch(() => [])).map(docRef) : [];
     let lastFolder = null;
     try {
       lastFolder = JSON.parse(localStorage.getItem(SESSION_KEY) || "null")?.folder;
     } catch (_) {}
-    if (!(await restoreSession(file))) {
+    if (!(await restoreSession(file ? [file, ...sent] : sent))) {
       await loadShell();
       await renderNow();
     }

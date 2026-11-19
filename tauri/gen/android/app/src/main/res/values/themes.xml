@@ -1,0 +1,6 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- The window shows behind the status and navigation bars: the page's background. -->
+    <style name="Theme.mdreader_tauri" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/page</item>
+    </style>
+</resources>
